@@ -30,15 +30,16 @@ class device_scanner(QObject):
         After the device scanner has found the
         :return:
         """
-        print("Found devices:")
-        print(self.scanner.discoveredDevices())
+        print()
+        print("##### Found devices #####")
         for device in self.scanner.discoveredDevices():
             print('UUID: {UUID}, Name: {name}, rssi: {rssi}'.format(UUID=device.deviceUuid().toString(),
                                                                     name=device.name(),
                                                                     rssi=device.rssi()))
+        print("#########################")
     def discovery(self,device):
         print("Device found:")
-        print(device)
+        print("----",device.name())
 
     def Scan_devices(self):
         print("Scanning devices...")
