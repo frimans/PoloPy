@@ -1,4 +1,5 @@
 from BLE import device_scanner as ds
+from BLE import Sensor_client as sc
 from PyQt5.QtWidgets import QMainWindow, QApplication
 import sys
 
@@ -14,6 +15,17 @@ class Application(QApplication):
         self.GUI = GUI()
         self.device_scanner = ds(timeout=5000)
         self.device_scanner.Scan_devices()
+        self.device_scanner.scan_ends.connect(self.scanning_ends)
+    def scanning_ends(self, devices):
+        print("The scanning has ended!!!")
+        for dev in devices:
+            print(dev.name())
+            print(dev.address().toString())
+
+        self.scanner = sc()
+        self.scanner.connect(devices[1])
+
+
 
 
 def main():
