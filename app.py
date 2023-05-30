@@ -7,8 +7,6 @@ class GUI(QMainWindow):
     def __init__(self):
         super().__init__()
 
-
-
 class Application(QApplication):
     def __init__(self, sys_argv):
         super(Application, self).__init__(sys_argv)
@@ -17,15 +15,21 @@ class Application(QApplication):
         self.device_scanner.Scan_devices()
         self.device_scanner.scan_ends.connect(self.scanning_ends)
     def scanning_ends(self, devices):
-        print("The scanning has ended!!!")
-        for dev in devices:
-            print(dev.name())
-            print(dev.address().toString())
+        print("The scanning has ended!!!\n")
 
         self.scanner = sc()
-        self.scanner.connect(devices[1])
+        Polar_devices = []
+        for d in range(0,len(devices)):
+            if "Polar" in devices[d].name():
+                Polar_devices.append(devices[d])
+        print("Found Polar devices:", len(Polar_devices))
+        for device in Polar_devices:
+            print('----- Name: {name}, Address: {address} UUID: {UUID}, rssi: {rssi}'.format(
+                UUID=device.deviceUuid().toString(),
+                name=device.name(),
+                rssi=device.rssi(), address=device.address().toString()))
 
-
+        self.scanner.connect(Polar_devices[0])
 
 
 def main():
