@@ -1,4 +1,4 @@
-# PoloPy
+![Alt text](polopylogo.jpg)
 Open Polar wearable data logger API and tools in Python
 
 In this project an open Python API for Polar wearable fittness sensors is implemented. The aim is to provide simple to use tools for logging the wariety of signals Polar wearables are able to produce:
