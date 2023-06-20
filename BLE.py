@@ -10,15 +10,15 @@ Author: Severi Friman, severi.friman@gmail.com
 # Todo: Serching and communication functions
 import PyQt5
 from PyQt5.QtBluetooth import QBluetoothDeviceDiscoveryAgent, QLowEnergyController, QBluetoothDeviceInfo, QBluetoothUuid, QLowEnergyService
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, pyqtSignal, QByteArray
 
-import asyncio
 from math import ceil
 
 
 class device_scanner(QObject):
     scan_ends = pyqtSignal(object)
     def __init__(self, timeout):
+
         super().__init__()
         self.devices = []
         self.finished = False
@@ -71,6 +71,13 @@ class Sensor_client(QObject):
         super().__init__()
         self.sensor_address = ""
         self.controller = None
+
+        self.hr_service = None
+        self.hr_notification = None
+        self.ENABLE_NOTIFICATION = QByteArray.fromHex(b"0100")
+        self.DISABLE_NOTIFICATION = QByteArray.fromHex(b"0000")
+        self.HR_SERVICE = QBluetoothUuid.ServiceClassUuid.HeartRate
+        self.HR_CHARACTERISTIC = QBluetoothUuid.CharacteristicType.HeartRateMeasurement
     def connect(self, sensor):
         print("Forming connection to:", sensor.name(), "Address:", sensor.address().toString())
         if self.controller:
@@ -118,7 +125,9 @@ class Sensor_client(QObject):
         UserData = 0x181c | Provides the user related data.
         
         PolarH10 services:
-        5c80
+        5c80 = PMD_service establishment
+        5C81 = PMD_control | Requesting stream settings
+        5C82 = PMD_data | Request to start stream
         HR_measurement = 2a37
         HR_service = 180d
         Body_sensor_location = 2a38
@@ -134,23 +143,49 @@ class Sensor_client(QObject):
             if '180d' in UUID_parts[0]:
                 # This is HR_service
                 service_to_use = service
+                print("Found HR service")
+
         self.HR_service(service_to_use)
 
 
 
 
-    def HR_service(self, hr_service):
 
+    def HR_service(self, hr_service):
+        print(hr_service)
         self.hr_service = self.controller.createServiceObject(hr_service)
-        self.hr_service.stateChanged.connect(self._start_hr_notification)
-        self.hr_service.characteristicChanged.connect(self._data_handler)
-        self.hr_service.discoverDetails()
+
+        print(self.hr_service.state())
+
+        print(self.hr_service)
+        print(self.hr_service.characteristics())
+        print("Service object created")
+        print("######")
+        print(self.hr_service.state())
+        print(PyQt5.QtBluetooth.QLowEnergyService.DiscoveryRequired)
+        print("######")
+
+        if self.hr_service.state() == PyQt5.QtBluetooth.QLowEnergyService.DiscoveryRequired:
+            self.hr_service.discoverDetails()
+            self.hr_service.stateChanged.connect(self._start_hr_notification)
+
+        if self.hr_service:
+
+            self.hr_service.characteristicChanged.connect(self._data_handler)
+            self.hr_service.discoverDetails()
 
     # For now these two copied from openhrv
     def _start_hr_notification(self, state):
+        print("HR notification")
+        """
         if state != QLowEnergyService.ServiceDiscovered:
+            print("pass")
             return
+        """
+        print(self.HR_CHARACTERISTIC)
+        print(self.hr_service.characteristics())
         hr_char = self.hr_service.characteristic(self.HR_CHARACTERISTIC)
+        print("Characteristic")
         if not hr_char.isValid():
             print(f"Couldn't find HR characterictic on {self._sensor_address()}.")
         self.hr_notification = hr_char.descriptor(
@@ -159,6 +194,7 @@ class Sensor_client(QObject):
         if not self.hr_notification.isValid():
             print("HR characteristic is invalid.")
         self.hr_service.writeDescriptor(self.hr_notification, self.ENABLE_NOTIFICATION)
+        print("notification started")
 
     def _data_handler(self, _, data):  # _ is unused but mandatory argument
         """
@@ -184,7 +220,9 @@ class Sensor_client(QObject):
             One IBI is encoded by 2 consecutive bytes. Up to 18 bytes depending
             on presence of uint16 HR format and energy expenditure.
         """
+        print("Data handled initialized")
         data = data.data()  # convert from QByteArray to Python bytes
+        print(data)
 
         byte0 = data[0]
         uint8_format = (byte0 & 1) == 0
@@ -212,6 +250,7 @@ class Sensor_client(QObject):
             # TODO: move conversion to model and only convert if sensor doesn't
             # transmit data in milliseconds.
             ibi = ceil(ibi / 1024 * 1000)
+            print(ibi)
             self.ibi_update.emit(ibi)
 
 

@@ -1,7 +1,10 @@
+import BLE
+
 from BLE import device_scanner as ds
 from BLE import Sensor_client as sc
 from PyQt5.QtWidgets import QMainWindow, QApplication
 import sys
+
 
 class GUI(QMainWindow):
     def __init__(self):
@@ -9,6 +12,7 @@ class GUI(QMainWindow):
 
 class Application(QApplication):
     def __init__(self, sys_argv):
+
         super(Application, self).__init__(sys_argv)
         self.GUI = GUI()
         self.device_scanner = ds(timeout=5000)
@@ -19,6 +23,8 @@ class Application(QApplication):
 
         self.scanner = sc()
         Polar_devices = []
+        H10_MAC = ''
+        H10 = None
         for d in range(0,len(devices)):
             if "Polar" in devices[d].name():
                 Polar_devices.append(devices[d])
@@ -28,8 +34,15 @@ class Application(QApplication):
                 UUID=device.deviceUuid().toString(),
                 name=device.name(),
                 rssi=device.rssi(), address=device.address().toString()))
+            if 'H10' in device.name():
 
-        self.scanner.connect(Polar_devices[0])
+                H10_MAC = device.address().toString()
+                self.scanner.connect(device)
+
+
+
+
+
 
 
 def main():
