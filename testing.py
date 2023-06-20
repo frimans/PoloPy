@@ -33,15 +33,15 @@ UART_RX_CHAR_UUID = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 UART_TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 UART_SAFE_SIZE = 20
+Battery_level = 100
 
 
 @dataclass
 class QBleakClient(QObject):
 
     device: BLEDevice
-
-    messageChanged = pyqtSignal(bytes)
     ecg_updated = pyqtSignal(list)
+    Battery_level_read = pyqtSignal(int)
 
     def data_conv(self, sender, data):
         if data[0] == 0x00:
@@ -79,7 +79,13 @@ class QBleakClient(QObject):
     async def start(self):
         await self.client.connect()
 
+        ## UUID for battery level ##
+        BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 
+        BL = await self.client.read_gatt_char(BATTERY_LEVEL_UUID)
+        Battery_level = int(BL[0])
+        print(Battery_level, "%")
+        self.Battery_level_read.emit(Battery_level)
 
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
@@ -91,12 +97,6 @@ class QBleakClient(QObject):
     async def stop(self):
         await self.client.disconnect()
 
-    async def write(self, data):
-        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
-        ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
-        await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
-
-
     def _handle_disconnect(self) -> None:
         print("Device was disconnected, goodbye.")
         # cancelling all tasks effectively ends the program
@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
         self.streaming = False
         self.ECG_data = []
         self.ECG_data_save = []
+        self.battery_level = 100
         super().__init__()
         self.resize(330, 400)
 
@@ -117,7 +118,7 @@ class MainWindow(QMainWindow):
         scan_button = QPushButton("Scan Devices")
         self.devices_combobox = QComboBox()
         connect_button = QPushButton("Connect")
-        self.message_lineedit = QLineEdit()
+        disconnect_button = QPushButton("Disconnect")
 
         self.log_edit = QPlainTextEdit()
 
@@ -128,6 +129,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(scan_button)
         lay.addWidget(self.devices_combobox)
         lay.addWidget(connect_button)
+        #lay.addWidget(disconnect_button)
 
 
         lay.addWidget(self.log_edit)
@@ -136,13 +138,14 @@ class MainWindow(QMainWindow):
         self.plot.setWindowIcon(pg.QtGui.QIcon('polopylogo.ico'))
         self.plot.resize(1200, 200)
 
-
-
-        self.line = self.plot.plot(pen=pg.mkPen(color=(255, 0, 0), width=4))
+        cm = pg.ColorMap([0.0, 1.0], [(255,255,255, 0), 'r'])
+        pen = cm.getPen(span=(0, 400), width=5, orientation='horizontal')
+        self.line = self.plot.plot(pen=pen, width=4)
 
 
         scan_button.clicked.connect(self.handle_scan)
         connect_button.clicked.connect(self.handle_connect)
+        disconnect_button.clicked.connect(self.stop_client)
 
 
     @cached_property
@@ -153,12 +156,18 @@ class MainWindow(QMainWindow):
     def current_client(self):
         return self._client
 
+    @qasync.asyncSlot()
+    async def stop_client(self):
+        await self._client.stop()
+
+
     async def build_client(self, device):
         if self._client is not None:
             await self._client.stop()
         self._client = QBleakClient(device)
         self._client.ecg_updated.connect(self.on_ecg_updated)
-        self._client.messageChanged.connect(self.handle_message_changed)
+        self._client.Battery_level_read.connect(self.battery_level_updated)
+
         await self._client.start()
 
     @qasync.asyncSlot()
@@ -168,6 +177,7 @@ class MainWindow(QMainWindow):
         if isinstance(device, BLEDevice):
             await self.build_client(device)
             self.log_edit.appendPlainText("connected")
+            self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + " %")
             self.log_edit.appendPlainText("Preparing data stream...")
 
     @qasync.asyncSlot()
@@ -189,13 +199,13 @@ class MainWindow(QMainWindow):
         if Polar_amount !=0:
             self.log_edit.appendPlainText("Select a device from the list for connecting.")
 
-    def handle_message_changed(self, message):
-        self.log_edit.appendPlainText(f"msg: {message.decode()}")
+    def battery_level_updated(self, level):
+        self.battery_level = level
+
     def on_ecg_updated(self, output):
         if len(self.ECG_data) == 0:
             self.streaming == True
             self.log_edit.appendPlainText("Streaming")
-
 
         self.ECG_data_save.append(output)
         for i in output:
@@ -203,19 +213,12 @@ class MainWindow(QMainWindow):
 
             if len(self.ECG_data) >= 1200:
                 self.ECG_data = self.ECG_data[-1200:]
-            #QtTest.QTest.qWait(1)
+            #QtTest.QTest.qWait(0)
             self.update_plot()
 
     def update_plot(self):
         self.line.setData(y=self.ECG_data)
 
-    @qasync.asyncSlot()
-    async def handle_send(self):
-        if self.current_client is None:
-            return
-        message = self.message_lineedit.text()
-        if message:
-            await self.current_client.write(message.encode())
 
 
 def main():
