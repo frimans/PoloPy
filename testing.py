@@ -3,10 +3,12 @@ import time
 from dataclasses import dataclass
 from functools import cached_property
 import sys
+
+import numpy
 import pyqtgraph as pg
 import numpy as np
 from PyQt5 import QtTest, QtGui
-from PyQt5.QtCore import QObject, pyqtSignal, QTimer
+from PyQt5.QtCore import QObject, pyqtSignal, QTimer, Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -15,8 +17,12 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
+    QGridLayout,
+    QProgressBar,
     QWidget,
+
 )
+import heartpy as hp
 
 
 
@@ -87,6 +93,7 @@ class QBleakClient(QObject):
         print(Battery_level, "%")
         self.Battery_level_read.emit(Battery_level)
 
+
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
         await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
@@ -108,40 +115,67 @@ class MainWindow(QMainWindow):
         self.ECG_data = []
         self.ECG_data_save = []
         self.battery_level = 100
+        self.update_index = 0
         super().__init__()
-        self.resize(330, 400)
+        self.resize(800, 400)
 
         self._client = None
 
-        self.setWindowTitle("PoloPy - control")
+        self.setWindowTitle("PoloPy")
         self.setWindowIcon(QtGui.QIcon('polopylogo.ico'))
         scan_button = QPushButton("Scan Devices")
+        scan_button.setFixedWidth(300)
         self.devices_combobox = QComboBox()
+        self.devices_combobox.setFixedWidth(300)
         connect_button = QPushButton("Connect")
+        connect_button.setFixedWidth(300)
         disconnect_button = QPushButton("Disconnect")
 
         self.log_edit = QPlainTextEdit()
-
+        self.log_edit.setFixedWidth(300)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        lay = QVBoxLayout(central_widget)
+        lay = QGridLayout(central_widget)
         lay.addWidget(scan_button)
         lay.addWidget(self.devices_combobox)
         lay.addWidget(connect_button)
         #lay.addWidget(disconnect_button)
-
-
         lay.addWidget(self.log_edit)
-        self.plot = pg.plot()
-        self.plot.setWindowTitle("PoloPy - ECG plot")
-        self.plot.setWindowIcon(pg.QtGui.QIcon('polopylogo.ico'))
-        self.plot.resize(1200, 200)
+        self.progressbar = QProgressBar(self, minimum=0, maximum=100)
+        self.progressbar.setFixedWidth(300)
+
+        lay.addWidget(self.progressbar)
+        self.progressbar.setStyleSheet(
+            "QProgressBar::chunk "
+            "{"
+            "background-color: green;"
+            "}")
+
+
+
+        self.plot = pg.PlotWidget()
+        self.text_label_HR = pg.LabelItem("Heart Rate: - BPM")
+        self.text_label_HR.setParentItem(self.plot.graphicsItem())
+        self.text_label_HR.anchor(itemPos=(0.1, 0.06), parentPos=(0.1, 0.06))
+
+        self.text_label_resp = pg.LabelItem("Respiratory rate: - BPM")
+        self.text_label_resp.setParentItem(self.plot.graphicsItem())
+        self.text_label_resp.anchor(itemPos=(0.105, 0.1), parentPos=(0.105, 0.1))
+
+        self.text_label_HRV = pg.LabelItem("Heart rate variablitiy: - ms")
+        self.text_label_HRV.setParentItem(self.plot.graphicsItem())
+        self.text_label_HRV.anchor(itemPos=(0.105, 0.14), parentPos=(0.105, 0.14))
+
+
+
 
         cm = pg.ColorMap([0.0, 1.0], [(255,255,255, 0), 'r'])
         pen = cm.getPen(span=(0, 400), width=5, orientation='horizontal')
         self.line = self.plot.plot(pen=pen, width=4)
 
+        # The Plot widget is scalable
+        lay.addWidget(self.plot,0,1, 5, 1)
 
         scan_button.clicked.connect(self.handle_scan)
         connect_button.clicked.connect(self.handle_connect)
@@ -178,6 +212,30 @@ class MainWindow(QMainWindow):
             await self.build_client(device)
             self.log_edit.appendPlainText("connected")
             self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + " %")
+
+            if self.battery_level < 60:
+                self.progressbar.setStyleSheet("QProgressBar::chunk "
+                          "{"
+                    "background-color: yellow;"
+                    "}")
+            elif self.battery_level < 30:
+                self.progressbar.setStyleSheet(
+                    "QProgressBar::chunk "
+                    "{"
+                    "background-color: red;"
+                    "}")
+            else:
+                self.progressbar.setStyleSheet(
+                "QProgressBar::chunk "
+                "{"
+                "background-color: green;"
+                "}")
+
+
+
+
+
+            self.progressbar.setValue(self.battery_level)
             self.log_edit.appendPlainText("Preparing data stream...")
 
     @qasync.asyncSlot()
@@ -213,8 +271,37 @@ class MainWindow(QMainWindow):
 
             if len(self.ECG_data) >= 1200:
                 self.ECG_data = self.ECG_data[-1200:]
-            #QtTest.QTest.qWait(0)
+
+                # Calculating measures fromt the raw ECG with heartpy library
+                working_data, measures = hp.process(np.array(self.ECG_data), 130)
+
+
+                if self.update_index == 300:
+                    # Update the readings to the plot
+                    if numpy.isnan(measures['bpm'] ):
+                        self.text_label_HR.setText("Heart rate: - BPM")
+                    else:
+                        self.text_label_HR.setText("Heart rate: " + str(int(measures['bpm'])) + " BPM")
+
+                    if numpy.isnan(measures['breathingrate']):
+                        self.text_label_resp.setText("Respiratory rate: - BPM")
+                    else:
+                        self.text_label_resp.setText("Respiratory rate: " + str(int(measures['breathingrate'] * 60)) + " BPM")
+
+                    if numpy.isnan(measures['rmssd']):
+                        self.text_label_HRV.setText("RMSSD: - ms")
+                    else:
+                        self.text_label_HRV.setText("RMSSD: " + str(int(measures['rmssd'])) + " ms")
+                    self.update_index = 0
+
+                self.update_index += 1
+
+
+
             self.update_plot()
+
+
+
 
     def update_plot(self):
         self.line.setData(y=self.ECG_data)
