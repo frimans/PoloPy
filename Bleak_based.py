@@ -18,6 +18,8 @@ uuid16_dict = {v: k for k, v in uuid16_dict.items()}
 
 ## This is the device MAC ID, please update with your device ID
 ADDRESS = str('E8:31:7F:97:C5:64')
+#ADDRESS = str("00:22:D0:E4:9A:AD")
+
 
 ## UUID for model number ##
 MODEL_NBR_UUID = "0000{0:x}-0000-1000-8000-00805f9b34fb".format(

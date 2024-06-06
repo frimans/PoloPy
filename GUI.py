@@ -5,6 +5,7 @@ import numpy
 import pyqtgraph as pg
 import numpy as np
 from PyQt5 import QtGui
+from scipy.fft import fft
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -40,7 +41,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         self.streaming = False
         self.ECG_data = []
+        self.HR_data = []
+        self.IBI_data = []
         self.ECG_data_save = []
+        self.respiratory_rate = []
+        self.acc_x = []
+        self.acc_y = []
+        self.acc_z = []
         self.battery_level = 100
         self.update_index = 0
         super().__init__()
@@ -95,6 +102,7 @@ class MainWindow(QMainWindow):
         cm = pg.ColorMap([0.0, 1.0], [(255,255,255, 0), 'r'])
         pen = cm.getPen(span=(0, 400), width=5, orientation='horizontal')
         self.line = self.plot.plot(pen=pen, width=4)
+        self.line_HR = self.plot.plot(pen=pen, width=4)
 
         # The Plot widget is scalable
         lay.addWidget(self.plot,0,1, 5, 1)
@@ -120,16 +128,25 @@ class MainWindow(QMainWindow):
     async def build_client(self, device):
         if self._client is not None:
             await self._client.stop()
+        # Connect the updates on the bleak client with the GUI
+        # These are the loops for processing the incoming data from the sensor for processing
         self._client = BleakClient.QBleakClient(device)
         self._client.ecg_updated.connect(self.on_ecg_updated)
+        self._client.acc_updated.connect(self.on_acc_updated)
+        self._client.HR_updated.connect(self.on_HR_updated)
         self._client.Battery_level_read.connect(self.battery_level_updated)
 
         await self._client.start()
+        await self._client.start_HR()
+        await self._client.start_ECG()
+        await self._client.start_ACC()
 
     @qasync.asyncSlot()
     async def handle_connect(self):
         self.log_edit.appendPlainText("Connecting...")
         device = self.devices_combobox.currentData()
+
+
         if isinstance(device, BLEDevice):
             await self.build_client(device)
             self.log_edit.appendPlainText("connected")
@@ -190,17 +207,14 @@ class MainWindow(QMainWindow):
 
             if len(self.ECG_data) >= 1200:
                 self.ECG_data = self.ECG_data[-1200:]
-
+            """
                 # Calculating measures fromt the raw ECG with heartpy library
                 working_data, measures = hp.process(np.array(self.ECG_data), 130)
 
 
                 if self.update_index == 300:
                     # Update the readings to the plot
-                    if numpy.isnan(measures['bpm'] ):
-                        self.text_label_HR.setText("Heart rate: - BPM")
-                    else:
-                        self.text_label_HR.setText("Heart rate: " + str(int(measures['bpm'])) + " BPM")
+
 
                     if numpy.isnan(measures['breathingrate']):
                         self.text_label_resp.setText("Respiratory rate: - BPM")
@@ -214,16 +228,52 @@ class MainWindow(QMainWindow):
                     self.update_index = 0
 
                 self.update_index += 1
-
-
-
+            """
+            self.update_plot()
+    def on_acc_updated(self, output):
+        # Accelerometer packet received
+        for reading in output:
+            self.acc_x.append(reading[0])
+            self.acc_y.append(reading[1])
+            self.acc_z.append(reading[2])
+        if len(self.acc_z) >= 2200:
+            self.acc_z = self.acc_z[-2200:]
+            self.acc_z = np.array(self.acc_z)/np.mean(self.acc_z)
+            self.acc_z = self.acc_z.tolist()
+            padding = 15000
+            hamm1 = np.hamming(len(self.acc_z))
+            freq_axis = np.arange(0, 100, 100 / (5000 / 2))
+            #freq_axis = np.arange(0, 100, 100 / 2200)
+            Frequencies = np.abs(fft(self.acc_z*hamm1, n = padding))
+            Frequencies = Frequencies[0:len(Frequencies) // 2]
+            Frequencies = Frequencies / np.max(Frequencies)
+            resp = freq_axis[np.argmax(Frequencies[1:])] * 60
+            self.respiratory_rate.append(resp)
+            self.text_label_resp.setText("Respiratory rate: " + str(resp) + " BPM")
+            print("Respiration:", resp)
             self.update_plot()
 
 
 
 
+    def on_HR_updated(self, output):
+        self.IBI_data.append(output[0])
+        #print("HR packet")
+        #print("IBI:",output)
+        if len(self.IBI_data)> 10:
+            HR = (1/(np.average(self.IBI_data[-9:])/1000))*60
+            self.text_label_HR.setText("Heart rate: " + str(int(HR)) + " BPM")
+
+            self.HR_data.append(HR)
+            print("HR:", HR)
+            #self.update_plot()
+
+
     def update_plot(self):
-        self.line.setData(y=self.ECG_data)
+        self.line.setData(y=self.acc_z)
+        #self.line_HR.setData(y=self.acc_z)
+
+
 
 
 

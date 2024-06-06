@@ -39,12 +39,6 @@ class Application(QApplication):
                 H10_MAC = device.address().toString()
                 self.scanner.connect(device)
 
-
-
-
-
-
-
 def main():
     app = Application(sys.argv)
     #app.GUI.show()

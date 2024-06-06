@@ -1,5 +1,8 @@
 
 import asyncio
+import numpy as np
+import time
+import math
 from dataclasses import dataclass
 from functools import cached_property
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -10,7 +13,10 @@ from bleak.backends.device import BLEDevice
 class QBleakClient(QObject):
     device: BLEDevice
     ecg_updated = pyqtSignal(list)
+    acc_updated = pyqtSignal(list)
+    HR_updated = pyqtSignal(list)
     Battery_level_read = pyqtSignal(int)
+    first_acc_record = True
 
     def data_conv(self, sender, data):
         if data[0] == 0x00:
@@ -24,6 +30,100 @@ class QBleakClient(QObject):
                 offset += step
                 ecg_package.append(ecg)
             self.ecg_updated.emit(ecg_package)
+
+    def hr_data_conv(self, sender, data):
+        """
+        `data` is formatted according to the GATT Characteristic and Object Type 0x2A37 Heart Rate Measurement which is one of the three characteristics included in the "GATT Service 0x180D Heart Rate".
+        `data` can include the following bytes:
+        - flags
+            Always present.
+            - bit 0: HR format (uint8 vs. uint16)
+            - bit 1, 2: sensor contact status
+            - bit 3: energy expenditure status
+            - bit 4: RR interval status
+        - HR
+            Encoded by one or two bytes depending on flags/bit0. One byte is always present (uint8). Two bytes (uint16) are necessary to represent HR > 255.
+        - energy expenditure
+            Encoded by 2 bytes. Only present if flags/bit3.
+        - inter-beat-intervals (IBIs)
+            One IBI is encoded by 2 consecutive bytes. Up to 18 bytes depending on presence of uint16 HR format and energy expenditure.
+        """
+        byte0 = data[0]  # heart rate format
+        uint8_format = (byte0 & 1) == 0
+        energy_expenditure = ((byte0 >> 3) & 1) == 1
+        rr_interval = ((byte0 >> 4) & 1) == 1
+
+        if not rr_interval:
+            return
+
+        first_rr_byte = 2
+        if uint8_format:
+            hr = data[1]
+            pass
+        else:
+            hr = (data[2] << 8) | data[1]  # uint16
+            first_rr_byte += 1
+
+        if energy_expenditure:
+            # ee = (data[first_rr_byte + 1] << 8) | data[first_rr_byte]
+            first_rr_byte += 2
+        values = []
+        for i in range(first_rr_byte, len(data), 2):
+            ibi = (data[i + 1] << 8) | data[i]
+            # Polar H7, H9, and H10 record IBIs in 1/1024 seconds format.
+            # Convert 1/1024 sec format to milliseconds.
+            # TODO: move conversion to model and only convert if sensor doesn't
+            # transmit data in milliseconds.
+            ibi = np.ceil(ibi / 1024 * 1000)
+            values.append(ibi)
+            #self.ibi_queue_values.enqueue(np.array([ibi]))
+            #self.ibi_queue_times.enqueue(np.array([time.time_ns() / 1.0e9]))
+        self.HR_updated.emit(values)
+
+    def acc_data_conv(self, sender, data):
+        # [02 EA 54 A2 42 8B 45 52 08 01 45 FF E4 FF B5 03 45 FF E4 FF B8 03 ...]
+        # 02=ACC,
+        # EA 54 A2 42 8B 45 52 08 = last sample timestamp in nanoseconds,
+        # 01 = ACC frameType,
+        # sample0 = [45 FF E4 FF B5 03] x-axis(45 FF=-184 millig) y-axis(E4 FF=-28 millig) z-axis(B5 03=949 millig) ,
+        # sample1, sample2,
+
+        if data[0] == 0x02:
+            time_step = 0.005  # 200 Hz sample rate
+            timestamp = self.convert_to_unsigned_long(data, 1,
+                                                          8) / 1.0e9  # timestamp of the last sample in the record
+
+            frame_type = data[9]
+            resolution = (frame_type + 1) * 8  # 16 bit
+            step = math.ceil(resolution / 8.0)
+            samples = data[10:]
+            n_samples = math.floor(len(samples) / (step * 3))
+            record_duration = (n_samples - 1) * time_step  # duration of the current record received in seconds
+
+            if self.first_acc_record:  # First record at the start of the stream
+                stream_start_t_epoch_s = time.time_ns() / 1.0e9 - record_duration
+                stream_start_t_polar_s = timestamp - record_duration
+                self.polar_to_epoch_s = stream_start_t_epoch_s - stream_start_t_polar_s
+                self.first_acc_record = False
+
+            sample_timestamp = timestamp - record_duration + self.polar_to_epoch_s  # timestamp of the first sample in the record in epoch seconds
+            offset = 0
+            Acc_list = []
+            while offset < len(samples):
+                x = self.convert_array_to_signed_int(samples, offset, step) / 100.0
+                offset += step
+                y = self.convert_array_to_signed_int(samples, offset, step) / 100.0
+                offset += step
+                z = self.convert_array_to_signed_int(samples, offset, step) / 100.0
+                offset += step
+
+                #self.acc_queue_times.enqueue(np.array([sample_timestamp]))
+                #self.acc_queue_values.enqueue(np.array([x, y, z]))
+                Acc_list.append([x, y, z])
+
+                sample_timestamp += time_step
+            self.acc_updated.emit(Acc_list)
+
 
     def convert_array_to_signed_int(self, data, offset, length):
         return int.from_bytes(
@@ -46,25 +146,116 @@ class QBleakClient(QObject):
     async def start(self):
         await self.client.connect()
 
+
         ## UUID for battery level ##
         BATTERY_LEVEL_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 
-        BL = await self.client.read_gatt_char(BATTERY_LEVEL_UUID)
-        Battery_level = int(BL[0])
-        print(Battery_level, "%")
+        ## DEVICE INFORMATION SERVICE
+        DEVICE_INFORMATION_SERVICE = "0000180a-0000-1000-8000-00805f9b34fb"
+        MANUFACTURER_NAME_UUID = "00002a29-0000-1000-8000-00805f9b34fb"
+        MODEL_NBR_UUID = "00002a24-0000-1000-8000-00805f9b34fb"
+        SERIAL_NUMBER_UUID = "00002a25-0000-1000-8000-00805f9b34fb"
+        HARDWARE_REVISION_UUID = "00002a27-0000-1000-8000-00805f9b34fb"
+        FIRMWARE_REVISION_UUID = "00002a26-0000-1000-8000-00805f9b34fb"
+        SOFTWARE_REVISION_UUID = "00002a28-0000-1000-8000-00805f9b34fb"
+        SYSTEM_ID_UUID = "00002a23-0000-1000-8000-00805f9b34fb"
+
+        self.model_number = await self.client.read_gatt_char(MODEL_NBR_UUID)
+        self.manufacturer_name = await self.client.read_gatt_char(MANUFACTURER_NAME_UUID)
+        self.serial_number = await self.client.read_gatt_char(SERIAL_NUMBER_UUID)
+        self.battery_level = await self.client.read_gatt_char(BATTERY_LEVEL_UUID)
+        self.firmware_revision = await self.client.read_gatt_char(FIRMWARE_REVISION_UUID)
+        self.hardware_revision = await self.client.read_gatt_char(HARDWARE_REVISION_UUID)
+        self.software_revision = await self.client.read_gatt_char(SOFTWARE_REVISION_UUID)
+
+
+        if "OH1" in ''.join(map(chr, self.model_number)):
+            print("Optical sensor info")
+            print("----------------------")
+        elif "H10" in ''.join(map(chr, self.model_number)):
+            print("ECG strap sensor info")
+            print("----------------------")
+
+
+
+        Battery_level = int(self.battery_level[0])
+        BLUE = "\033[94m"
+        RESET = "\033[0m"
+        print(f"Model Number: {BLUE}{''.join(map(chr, self.model_number))}{RESET}\n"
+              f"Bluetooth address: {BLUE}{self.device.address}{RESET}\n"
+              f"Manufacturer Name: {BLUE}{''.join(map(chr, self.manufacturer_name))}{RESET}\n"
+              f"Serial Number: {BLUE}{''.join(map(chr, self.serial_number))}{RESET}\n"
+              f"Battery Level: {BLUE}{int(self.battery_level[0])}%{RESET}\n"
+              f"Firmware Revision: {BLUE}{''.join(map(chr, self.firmware_revision))}{RESET}\n"
+              f"Hardware Revision: {BLUE}{''.join(map(chr, self.hardware_revision))}{RESET}\n"
+              f"Software Revision: {BLUE}{''.join(map(chr, self.software_revision))}{RESET}")
+
+        """
+        Tell the OH-1 that it should start to stream PPG values
+                
+        cmd = []
+        cmd.append(PolarDevice.CPOpCode.START_MEASUREMENT.value)
+        cmd.append(PolarDevice.MeasurementType.PPG.value)
+        cmd.append(0x00)  # Sample rate Setting
+        cmd.append(0x01)  # array count (?)
+        cmd.append(0x82)  # 16 bit value: 130 Hz
+        cmd.append(0x00)  # see above
+        cmd.append(0x01)  # Resolution Setting
+        cmd.append(0x01)  # array count
+        cmd.append(0x16)  # 16 bit value: 22 bit
+        cmd.append(0x00)  # see above
+        """
+
+        # Read the battery level and emit it to the GUI for displaying
         self.Battery_level_read.emit(Battery_level)
 
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
-        await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
+        #await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
+
+        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
 
         PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        #await self.client.start_notify(PMD_DATA, self.data_conv)
+
+        #self.start_HR()
+        ## HEART RATE SERVICE
+        HEART_RATE_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
+        # Characteristics
+        #HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+        #await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
+
+
+
+        #await self.client.write_gatt_char(PMD_CHAR1_UUID, ACC_WRITE, response=True)
+        #await self.client.start_notify(PMD_CHAR2_UUID, self.acc_data_conv)
+
+    async def start_HR(self):
+        HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+        await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
+
+    async def start_ECG(self):
+        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
+        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
+        await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
         await self.client.start_notify(PMD_DATA, self.data_conv)
+
+    async def start_ACC(self):
+        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
+        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
+        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        await self.client.write_gatt_char(PMD_CONTROL, ACC_WRITE)
+        await self.client.start_notify(PMD_DATA, self.acc_data_conv)
+
+
+
+
 
     async def stop(self):
         await self.client.disconnect()
 
-    def _handle_disconnect(self) -> None:
+    def _handle_disconnect(self):
         print("Device was disconnected, goodbye.")
         # cancelling all tasks effectively ends the program
         for task in asyncio.all_tasks():
