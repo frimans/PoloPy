@@ -8,6 +8,9 @@ from functools import cached_property
 from PyQt5.QtCore import QObject, pyqtSignal
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
+from bleak import BleakScanner
+import qasync
+
 
 @dataclass
 class QBleakClient(QObject):
@@ -17,6 +20,7 @@ class QBleakClient(QObject):
     HR_updated = pyqtSignal(list)
     Battery_level_read = pyqtSignal(int)
     first_acc_record = True
+
 
     def data_conv(self, sender, data):
         if data[0] == 0x00:
@@ -72,13 +76,13 @@ class QBleakClient(QObject):
             ibi = (data[i + 1] << 8) | data[i]
             # Polar H7, H9, and H10 record IBIs in 1/1024 seconds format.
             # Convert 1/1024 sec format to milliseconds.
-            # TODO: move conversion to model and only convert if sensor doesn't
+
             # transmit data in milliseconds.
             ibi = np.ceil(ibi / 1024 * 1000)
             values.append(ibi)
             #self.ibi_queue_values.enqueue(np.array([ibi]))
             #self.ibi_queue_times.enqueue(np.array([time.time_ns() / 1.0e9]))
-        self.HR_updated.emit(values)
+        self.HR_updated.emit([hr, values])
 
     def acc_data_conv(self, sender, data):
         # [02 EA 54 A2 42 8B 45 52 08 01 45 FF E4 FF B5 03 45 FF E4 FF B8 03 ...]
@@ -142,6 +146,9 @@ class QBleakClient(QObject):
     @cached_property
     def client(self) -> BleakClient:
         return BleakClient(self.device, disconnected_callback=self._handle_disconnect)
+    async def scan(self):
+        devices = await BleakScanner.discover()
+        print(devices)
 
     async def start(self):
         await self.client.connect()
@@ -247,9 +254,6 @@ class QBleakClient(QObject):
         PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
         await self.client.write_gatt_char(PMD_CONTROL, ACC_WRITE)
         await self.client.start_notify(PMD_DATA, self.acc_data_conv)
-
-
-
 
 
     async def stop(self):

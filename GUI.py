@@ -1,10 +1,10 @@
 import asyncio
 from functools import cached_property
 import sys
-import numpy
 import pyqtgraph as pg
 import numpy as np
 from PyQt5 import QtGui
+from PyQt5.QtGui import QPixmap
 from scipy.fft import fft
 
 from PyQt5.QtWidgets import (
@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QGridLayout,
     QProgressBar,
-    QWidget,
+    QWidget, QLabel,
 )
 
 import heartpy as hp
@@ -32,6 +32,8 @@ UART_TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 UART_SAFE_SIZE = 20
 Battery_level = 100
+
+
 
 
 class MainWindow(QMainWindow):
@@ -53,11 +55,14 @@ class MainWindow(QMainWindow):
         self.update_index = 0
         super().__init__()
         self.resize(800, 400)
+        self.pixmap_H10 = QPixmap('Images/H10_icon.png')
+        self.pixmap_OH1 = QPixmap('Images/OH1_icon.png')
+        self.pixmap_battery = QPixmap('Images/battery_icon.png')
 
         self._client = None
 
         self.setWindowTitle("PoloPy")
-        self.setWindowIcon(QtGui.QIcon('polopylogo.ico'))
+        self.setWindowIcon(QtGui.QIcon('Images/polopylogo.ico'))
         scan_button = QPushButton("Scan Devices")
         scan_button.setFixedWidth(300)
         self.devices_combobox = QComboBox()
@@ -68,6 +73,9 @@ class MainWindow(QMainWindow):
 
         self.log_edit = QPlainTextEdit()
         self.log_edit.setFixedWidth(300)
+
+
+
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -87,6 +95,7 @@ class MainWindow(QMainWindow):
             "background-color: green;"
             "}")
 
+        # The real time Graph with pyqtgraph
         self.plot = pg.PlotWidget()
         self.text_label_HR = pg.LabelItem("Heart Rate: - BPM")
         self.text_label_HR.setParentItem(self.plot.graphicsItem())
@@ -100,10 +109,23 @@ class MainWindow(QMainWindow):
         self.text_label_HRV.setParentItem(self.plot.graphicsItem())
         self.text_label_HRV.anchor(itemPos=(0.1, 0.14), parentPos=(0.1, 0.14))
 
+
+
         cm = pg.ColorMap([0.0, 1.0], [(255,255,255, 0), 'r'])
-        pen = cm.getPen(span=(0, 1), width=5, orientation='horizontal')
+        pen = cm.getPen(span=(0, 400), width=5, orientation='horizontal')
         self.line = self.plot.plot(pen=pen, width=4)
         self.line_HR = self.plot.plot(pen=pen, width=4)
+
+        self.Device_icon = QLabel(self.log_edit)
+        self.Device_icon.setScaledContents(True)
+        self.Device_icon.setVisible(False)
+        self.Device_icon.setGeometry(220, 1, 80, 80)
+
+        self.Battery_icon = QLabel(self.progressbar)
+        self.Battery_icon.setPixmap(self.pixmap_battery)
+        self.Battery_icon.setScaledContents(True)
+        self.Battery_icon.setVisible(False)
+        self.Battery_icon.setGeometry(230, 1, 50, 20)
 
         # The Plot widget is scalable
         lay.addWidget(self.plot,0,1, 5, 1)
@@ -150,7 +172,17 @@ class MainWindow(QMainWindow):
 
         if isinstance(device, BLEDevice):
             await self.build_client(device)
-            self.log_edit.appendPlainText("connected")
+            if "H10" in device.name:
+                self.Device_icon.setVisible(True)
+                self.Device_icon.setPixmap(self.pixmap_H10)
+            if "OH1" in device.name:
+                self.Device_icon.setVisible(True)
+                self.Device_icon.setPixmap(self.pixmap_OH1)
+            self.log_edit.clear()
+
+            self.Battery_icon.setVisible(True)
+
+            self.log_edit.appendPlainText("connected to " + str(device.name))
             self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + " %")
 
             if self.battery_level < 60:
@@ -173,6 +205,7 @@ class MainWindow(QMainWindow):
 
 
             self.progressbar.setValue(self.battery_level)
+
             self.log_edit.appendPlainText("Preparing data stream...")
 
     @qasync.asyncSlot()
@@ -252,7 +285,7 @@ class MainWindow(QMainWindow):
             Frequencies = Frequencies / np.max(Frequencies)
             resp = freq_axis[np.argmax(Frequencies)] * 60
             self.respiratory_rate.append(resp)
-            self.text_label_resp.setText("Respiratory rate: " + str(resp) + " BPM")
+            self.text_label_resp.setText("Respiratory rate: " + str(np.round(resp, 1)) + " BPM")
             print("Respiration:", resp,"|", np.argmax(Frequencies),"|", freq_axis[np.argmax(Frequencies)])
 
 
@@ -262,17 +295,35 @@ class MainWindow(QMainWindow):
 
 
     def on_HR_updated(self, output):
+        # output[0] = Polar HR
+        # output[1] = IBI list
+
+        # Here the HR estimate from the device is displayed in the GUI
+        self.text_label_HR.setText("Heart rate: " + str(output[0]) + " BPM")
+        print("HR: ", output[0])
+
+        # Alternatively the HR can be calculated from the IBI values
+        """
         self.IBI_data.append(output[0])
-        #print("HR packet")
-        #print("IBI:",output)
+        
         if len(self.IBI_data)> 10:
             HR = (1/(np.average(self.IBI_data[-9:])/1000))*60
-            self.text_label_HR.setText("Heart rate: " + str(int(HR)) + " BPM")
+            self.text_label_HR.setText("Heart rate: " + str(np.round(output, 1)) + " BPM")
 
             self.HR_data.append(HR)
             print("HR:", HR)
             #self.update_plot()
+        """
 
+        # HRV calculation
+        for reading in output[1]:
+            self.IBI_data.append(reading)
+
+
+        RMSSD = np.round(np.sqrt(np.mean(np.square(np.diff(self.IBI_data)))),1)
+
+        self.text_label_HRV.setText("RMSSD: " + str(RMSSD) + " ms")
+        print("RMSSD: ", RMSSD, " ms")
 
     def update_plot(self):
 
