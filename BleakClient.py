@@ -1,5 +1,7 @@
 
 import asyncio
+import struct
+
 import numpy as np
 import time
 import math
@@ -16,13 +18,14 @@ import qasync
 class QBleakClient(QObject):
     device: BLEDevice
     ecg_updated = pyqtSignal(list)
+    ppg_updated = pyqtSignal(list)
     acc_updated = pyqtSignal(list)
     HR_updated = pyqtSignal(list)
     Battery_level_read = pyqtSignal(int)
     first_acc_record = True
 
 
-    def data_conv(self, sender, data):
+    def ecg_data_conv(self, sender, data):
         if data[0] == 0x00:
             timestamp = self.convert_to_unsigned_long(data, 1, 8)
             step = 3
@@ -34,6 +37,37 @@ class QBleakClient(QObject):
                 offset += step
                 ecg_package.append(ecg)
             self.ecg_updated.emit(ecg_package)
+    def ppg_data_conv(self, data):
+        # type1 (8)
+        # timestamp (64)
+        # type2 (8)
+        # list of sample, where each is:
+        #   ppg1 (24)
+        #   ppg2 (24)
+        #   ppg3 (24)
+        #   amb (24)
+
+        if self.__debug:
+            print("Data length: {}".format(len(data)))
+
+        def get_ppg_value(subdata):
+            # A bit of magic happening here with the padding.
+            # Since the value comes as a 24 bit signed int, it's padded to allow the use
+            # of struct.unpack("<i") since that takes a 32 bit signed integer.
+            # The padding is then either 0xFF or 0x00 depending of if the most significant
+            # bit of the most significant byte of the 24 bit value was set. Since this
+            # determine if the value was positive of negative.
+            return struct.unpack("<i", subdata + (b'\0' if subdata[2] < 128 else b'\xff'))[0]
+
+
+            numSamples = math.floor((len(data) - 10) / 12)
+            for x in range(numSamples):
+                for y in range(4):
+                    if self.__debug:
+                        print("PPG Value {}: {}".format(y,
+                                                        get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3])))
+                        self.ppg_updated.emit(get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3]))
+
 
     def hr_data_conv(self, sender, data):
         """
@@ -198,8 +232,42 @@ class QBleakClient(QObject):
               f"Software Revision: {BLUE}{''.join(map(chr, self.software_revision))}{RESET}")
 
         """
+        Measurement type:
+        ECG = 0,
+        PPG = 1,
+        ACC = 2,
+        PPI = 3,
+        GYRO = 5,
+        MAG = 6
+        """
+
+        # Read the battery level and emit it to the GUI for displaying
+        self.Battery_level_read.emit(Battery_level)
+
+
+    async def start_HR(self):
+        HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
+        await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
+
+    async def start_ECG(self):
+        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
+        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
+        await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
+        await self.client.start_notify(PMD_DATA, self.ecg_data_conv)
+
+    async def start_ACC(self):
+        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
+        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
+        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        await self.client.write_gatt_char(PMD_CONTROL, ACC_WRITE)
+        await self.client.start_notify(PMD_DATA, self.acc_data_conv)
+
+    async def start_PPG(self):
+        """
+
         Tell the OH-1 that it should start to stream PPG values
-                
+
         cmd = []
         cmd.append(PolarDevice.CPOpCode.START_MEASUREMENT.value)
         cmd.append(PolarDevice.MeasurementType.PPG.value)
@@ -213,46 +281,10 @@ class QBleakClient(QObject):
         cmd.append(0x00)  # see above
         """
 
-        # Read the battery level and emit it to the GUI for displaying
-        self.Battery_level_read.emit(Battery_level)
-
-        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
-        ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
-        #await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
-
-        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
-
-        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
-        #await self.client.start_notify(PMD_DATA, self.data_conv)
-
-        #self.start_HR()
-        ## HEART RATE SERVICE
-        HEART_RATE_SERVICE_UUID = "0000180d-0000-1000-8000-00805f9b34fb"
-        # Characteristics
-        #HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
-        #await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
-
-
-
-        #await self.client.write_gatt_char(PMD_CHAR1_UUID, ACC_WRITE, response=True)
-        #await self.client.start_notify(PMD_CHAR2_UUID, self.acc_data_conv)
-
-    async def start_HR(self):
-        HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
-        await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
-
-    async def start_ECG(self):
+        PPG_WRITE = bytearray([0x02, 0x01, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x16, 0x00])
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
-        ECG_WRITE = bytearray([0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00])
-        await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
-        await self.client.start_notify(PMD_DATA, self.data_conv)
-
-    async def start_ACC(self):
-        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
-        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
-        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
-        await self.client.write_gatt_char(PMD_CONTROL, ACC_WRITE)
+        await self.client.write_gatt_char(PMD_CONTROL, PPG_WRITE)
         await self.client.start_notify(PMD_DATA, self.acc_data_conv)
 
 

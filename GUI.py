@@ -43,6 +43,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         self.streaming = False
         self.ECG_data = []
+        self.PPG_data = []
         self.HR_data = []
         self.IBI_data = []
         self.ECG_data_save = []
@@ -155,14 +156,20 @@ class MainWindow(QMainWindow):
         # These are the loops for processing the incoming data from the sensor for processing
         self._client = BleakClient.QBleakClient(device)
         self._client.ecg_updated.connect(self.on_ecg_updated)
+        self._client.ppg_updated.connect(self.on_ppg_updated)
         self._client.acc_updated.connect(self.on_acc_updated)
         self._client.HR_updated.connect(self.on_HR_updated)
         self._client.Battery_level_read.connect(self.battery_level_updated)
 
         await self._client.start()
-        await self._client.start_HR()
-        await self._client.start_ECG()
+        if "H10" in device.name:
+            await self._client.start_ECG()
+        if "OH1" in device.name:
+
+
+            await self._client.start_PPG()
         await self._client.start_ACC()
+        await self._client.start_HR()
 
     @qasync.asyncSlot()
     async def handle_connect(self):
@@ -242,28 +249,27 @@ class MainWindow(QMainWindow):
             if len(self.ECG_data) >= 1200:
                 self.ECG_data = self.ECG_data[-1200:]
             """
-                # Calculating measures fromt the raw ECG with heartpy library
-                working_data, measures = hp.process(np.array(self.ECG_data), 130)
-
-
-                if self.update_index == 300:
-                    # Update the readings to the plot
-
-
-                    if numpy.isnan(measures['breathingrate']):
-                        self.text_label_resp.setText("Respiratory rate: - BPM")
-                    else:
-                        self.text_label_resp.setText("Respiratory rate: " + str(int(measures['breathingrate'] * 60)) + " BPM")
-
-                    if numpy.isnan(measures['rmssd']):
-                        self.text_label_HRV.setText("RMSSD: - ms")
-                    else:
-                        self.text_label_HRV.setText("RMSSD: " + str(int(measures['rmssd'])) + " ms")
-                    self.update_index = 0
-
-                self.update_index += 1
+            Some real time actions on the ECG can be performed here
             """
-            self.update_plot()
+
+            self.update_plot(self.ECG_data)
+
+    def on_ppg_updated(self, output):
+        if len(self.PPG_data) == 0:
+            self.streaming == True
+            self.log_edit.appendPlainText("Streaming")
+
+        self.PPG_data_save.append(output)
+        for i in output:
+            self.PPG_data.append(i)
+
+            if len(self.PPG_data) >= 1200:
+                self.PPG_data = self.PPG_data[-1200:]
+            """
+            Some real time actions on the PPG can be performed here
+            """
+
+            self.update_plot(self.PPG_data)
     def on_acc_updated(self, output):
         # Accelerometer packet received
         for reading in output:
@@ -325,9 +331,9 @@ class MainWindow(QMainWindow):
         self.text_label_HRV.setText("RMSSD: " + str(RMSSD) + " ms")
         print("RMSSD: ", RMSSD, " ms")
 
-    def update_plot(self):
+    def update_plot(self, data_to_display):
 
-        self.line.setData(y=self.ECG_data)
+        self.line.setData(y=data_to_display)
 
 
 
