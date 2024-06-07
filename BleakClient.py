@@ -17,7 +17,7 @@ import qasync
 @dataclass
 class QBleakClient(QObject):
     device: BLEDevice
-    ecg_updated = pyqtSignal(list)
+    ecg_updated = pyqtSignal(int)
     ppg_updated = pyqtSignal(list)
     acc_updated = pyqtSignal(list)
     HR_updated = pyqtSignal(list)
@@ -27,7 +27,7 @@ class QBleakClient(QObject):
 
     def ecg_data_conv(self, sender, data):
         if data[0] == 0x00:
-            timestamp = self.convert_to_unsigned_long(data, 1, 8)
+            #timestamp = self.convert_to_unsigned_long(data, 1, 8)
             step = 3
             samples = data[10:]
             offset = 0
@@ -36,8 +36,8 @@ class QBleakClient(QObject):
                 ecg = self.convert_array_to_signed_int(samples, offset, step)
                 offset += step
                 ecg_package.append(ecg)
-            self.ecg_updated.emit(ecg_package)
-    def ppg_data_conv(self, data):
+                self.ecg_updated.emit(ecg)
+    def ppg_data_conv(self, sender, data):
         # type1 (8)
         # timestamp (64)
         # type2 (8)
@@ -47,10 +47,10 @@ class QBleakClient(QObject):
         #   ppg3 (24)
         #   amb (24)
 
-        if self.__debug:
-            print("Data length: {}".format(len(data)))
+
 
         def get_ppg_value(subdata):
+
             # A bit of magic happening here with the padding.
             # Since the value comes as a 24 bit signed int, it's padded to allow the use
             # of struct.unpack("<i") since that takes a 32 bit signed integer.
@@ -60,13 +60,14 @@ class QBleakClient(QObject):
             return struct.unpack("<i", subdata + (b'\0' if subdata[2] < 128 else b'\xff'))[0]
 
 
-            numSamples = math.floor((len(data) - 10) / 12)
-            for x in range(numSamples):
-                for y in range(4):
-                    if self.__debug:
-                        print("PPG Value {}: {}".format(y,
-                                                        get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3])))
-                        self.ppg_updated.emit(get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3]))
+        numSamples = math.floor((len(data) - 10) / 12)
+        for x in range(numSamples):
+            channel_samples = []
+            for y in range(4):
+                channel_samples.append(get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3]))
+
+
+            self.ppg_updated.emit(channel_samples)
 
 
     def hr_data_conv(self, sender, data):
@@ -281,11 +282,12 @@ class QBleakClient(QObject):
         cmd.append(0x00)  # see above
         """
 
+
         PPG_WRITE = bytearray([0x02, 0x01, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x16, 0x00])
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
         await self.client.write_gatt_char(PMD_CONTROL, PPG_WRITE)
-        await self.client.start_notify(PMD_DATA, self.acc_data_conv)
+        await self.client.start_notify(PMD_DATA, self.ppg_data_conv)
 
 
     async def stop(self):

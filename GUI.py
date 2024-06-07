@@ -43,7 +43,11 @@ class MainWindow(QMainWindow):
     def __init__(self):
         self.streaming = False
         self.ECG_data = []
-        self.PPG_data = []
+        self.PPG_data1 = []
+        self.PPG_data2 = []
+        self.PPG_data3 = []
+        self.PPG_ambient = []
+        self.PPG_data_save = []
         self.HR_data = []
         self.IBI_data = []
         self.ECG_data_save = []
@@ -114,8 +118,17 @@ class MainWindow(QMainWindow):
 
         cm = pg.ColorMap([0.0, 1.0], [(255,255,255, 0), 'r'])
         pen = cm.getPen(span=(0, 400), width=5, orientation='horizontal')
+
+        cm2 = pg.ColorMap([0.0, 1.0], [(255, 255, 255, 0), 'g'])
+        pen2 = cm2.getPen(span=(0, 400), width=5, orientation='horizontal')
+
+        cm3 = pg.ColorMap([0.0, 1.0], [(255, 255, 255, 0), 'b'])
+        pen3 = cm3.getPen(span=(0, 400), width=5, orientation='horizontal')
         self.line = self.plot.plot(pen=pen, width=4)
-        self.line_HR = self.plot.plot(pen=pen, width=4)
+
+        self.line_PPG1 = self.plot.plot(pen=pen, width=4)
+        self.line_PPG2 = self.plot.plot(pen=pen2, width=4)
+        self.line_PPG3 = self.plot.plot(pen=pen3, width=4)
 
         self.Device_icon = QLabel(self.log_edit)
         self.Device_icon.setScaledContents(True)
@@ -126,7 +139,7 @@ class MainWindow(QMainWindow):
         self.Battery_icon.setPixmap(self.pixmap_battery)
         self.Battery_icon.setScaledContents(True)
         self.Battery_icon.setVisible(False)
-        self.Battery_icon.setGeometry(230, 1, 50, 20)
+        self.Battery_icon.setGeometry(25, 3, 40, 15)
 
         # The Plot widget is scalable
         lay.addWidget(self.plot,0,1, 5, 1)
@@ -190,7 +203,7 @@ class MainWindow(QMainWindow):
             self.Battery_icon.setVisible(True)
 
             self.log_edit.appendPlainText("connected to " + str(device.name))
-            self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + " %")
+            self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + "%")
 
             if self.battery_level < 60:
                 self.progressbar.setStyleSheet("QProgressBar::chunk "
@@ -238,38 +251,49 @@ class MainWindow(QMainWindow):
         self.battery_level = level
 
     def on_ecg_updated(self, output):
-        if len(self.ECG_data) == 0:
+        if len(self.ECG_data) == 0 and self.streaming == False:
             self.streaming == True
             self.log_edit.appendPlainText("Streaming")
 
         self.ECG_data_save.append(output)
-        for i in output:
-            self.ECG_data.append(i)
 
-            if len(self.ECG_data) >= 1200:
-                self.ECG_data = self.ECG_data[-1200:]
-            """
-            Some real time actions on the ECG can be performed here
-            """
+        self.ECG_data.append(output)
 
-            self.update_plot(self.ECG_data)
+        if len(self.ECG_data) >= 1200:
+            self.ECG_data = self.ECG_data[-1200:]
+        """
+        Some real time actions on the ECG can be performed here
+        """
+
+        self.update_plot(self.ECG_data, type="ECG")
 
     def on_ppg_updated(self, output):
-        if len(self.PPG_data) == 0:
+        """
+        output[0] = PPG1
+        output[1] = PPG2
+        output[3] = PPG3
+        output[4] = Ambient
+        """
+
+        if len(self.PPG_data1) == 0 and self.streaming == False:
             self.streaming == True
             self.log_edit.appendPlainText("Streaming")
 
         self.PPG_data_save.append(output)
-        for i in output:
-            self.PPG_data.append(i)
 
-            if len(self.PPG_data) >= 1200:
-                self.PPG_data = self.PPG_data[-1200:]
-            """
-            Some real time actions on the PPG can be performed here
-            """
+        self.PPG_data1.append(output[0])
+        self.PPG_data2.append(output[1])
+        self.PPG_data3.append(output[2])
 
-            self.update_plot(self.PPG_data)
+        if len(self.PPG_data1) >= 1200:
+            self.PPG_data1 = self.PPG_data1[-1200:]
+            self.PPG_data2 = self.PPG_data2[-1200:]
+            self.PPG_data3 = self.PPG_data3[-1200:]
+        """
+        Some real time actions on the PPG can be performed here
+        """
+
+        self.update_plot([self.PPG_data1, self.PPG_data2, self.PPG_data3], type="PPG")
     def on_acc_updated(self, output):
         # Accelerometer packet received
         for reading in output:
@@ -306,7 +330,7 @@ class MainWindow(QMainWindow):
 
         # Here the HR estimate from the device is displayed in the GUI
         self.text_label_HR.setText("Heart rate: " + str(output[0]) + " BPM")
-        print("HR: ", output[0])
+        print("HR:", output[0])
 
         # Alternatively the HR can be calculated from the IBI values
         """
@@ -329,11 +353,15 @@ class MainWindow(QMainWindow):
         RMSSD = np.round(np.sqrt(np.mean(np.square(np.diff(self.IBI_data)))),1)
 
         self.text_label_HRV.setText("RMSSD: " + str(RMSSD) + " ms")
-        print("RMSSD: ", RMSSD, " ms")
+        print("RMSSD:", RMSSD, "ms")
 
-    def update_plot(self, data_to_display):
-
-        self.line.setData(y=data_to_display)
+    def update_plot(self, data_to_display, type):
+        if type == "ECG":
+            self.line.setData(y=data_to_display)
+        elif type == "PPG":
+            self.line_PPG1.setData(y=data_to_display[0])
+            self.line_PPG2.setData(y=data_to_display[1])
+            self.line_PPG3.setData(y=data_to_display[2])
 
 
 
