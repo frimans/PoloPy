@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.acc_x = []
         self.acc_y = []
         self.acc_z = []
+        self.ACC_calc = np.array(0)
         self.battery_level = 100
         self.update_index = 0
         super().__init__()
@@ -100,7 +101,7 @@ class MainWindow(QMainWindow):
         self.text_label_HRV.anchor(itemPos=(0.1, 0.14), parentPos=(0.1, 0.14))
 
         cm = pg.ColorMap([0.0, 1.0], [(255,255,255, 0), 'r'])
-        pen = cm.getPen(span=(0, 400), width=5, orientation='horizontal')
+        pen = cm.getPen(span=(0, 1), width=5, orientation='horizontal')
         self.line = self.plot.plot(pen=pen, width=4)
         self.line_HR = self.plot.plot(pen=pen, width=4)
 
@@ -236,22 +237,26 @@ class MainWindow(QMainWindow):
             self.acc_x.append(reading[0])
             self.acc_y.append(reading[1])
             self.acc_z.append(reading[2])
-        if len(self.acc_z) >= 2200:
-            self.acc_z = self.acc_z[-2200:]
-            self.acc_z = np.array(self.acc_z)/np.mean(self.acc_z)
-            self.acc_z = self.acc_z.tolist()
+        if len(self.acc_z) >= 4200:
+            self.acc_z = self.acc_z[-4200:]
+            self.ACC_calc = np.array(self.acc_z) - np.mean(self.acc_z)
+
+
+
             padding = 15000
             hamm1 = np.hamming(len(self.acc_z))
-            freq_axis = np.arange(0, 100, 100 / (5000 / 2))
+            freq_axis = np.arange(0, 100, 100 / (padding / 2))
             #freq_axis = np.arange(0, 100, 100 / 2200)
-            Frequencies = np.abs(fft(self.acc_z*hamm1, n = padding))
+            Frequencies = np.abs(fft(self.ACC_calc*hamm1, n = padding))
             Frequencies = Frequencies[0:len(Frequencies) // 2]
             Frequencies = Frequencies / np.max(Frequencies)
-            resp = freq_axis[np.argmax(Frequencies[1:])] * 60
+            resp = freq_axis[np.argmax(Frequencies)] * 60
             self.respiratory_rate.append(resp)
             self.text_label_resp.setText("Respiratory rate: " + str(resp) + " BPM")
-            print("Respiration:", resp)
-            self.update_plot()
+            print("Respiration:", resp,"|", np.argmax(Frequencies),"|", freq_axis[np.argmax(Frequencies)])
+
+
+
 
 
 
@@ -270,8 +275,9 @@ class MainWindow(QMainWindow):
 
 
     def update_plot(self):
-        self.line.setData(y=self.acc_z)
-        #self.line_HR.setData(y=self.acc_z)
+
+        self.line.setData(y=self.ECG_data)
+
 
 
 
