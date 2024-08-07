@@ -293,7 +293,7 @@ class QBleakClient(QObject):
     async def stop(self):
         await self.client.disconnect()
 
-    def _handle_disconnect(self):
+    def _handle_disconnect(self, true):
         print("Device was disconnected, goodbye.")
         # cancelling all tasks effectively ends the program
         for task in asyncio.all_tasks():

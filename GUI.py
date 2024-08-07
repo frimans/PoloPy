@@ -42,6 +42,7 @@ class MainWindow(QMainWindow):
     """
     def __init__(self):
         self.streaming = False
+        self.device_connected = False
         self.ECG_data = []
         self.PPG_data1 = []
         self.PPG_data2 = []
@@ -72,8 +73,8 @@ class MainWindow(QMainWindow):
         scan_button.setFixedWidth(300)
         self.devices_combobox = QComboBox()
         self.devices_combobox.setFixedWidth(300)
-        connect_button = QPushButton("Connect")
-        connect_button.setFixedWidth(300)
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.setFixedWidth(300)
         disconnect_button = QPushButton("Disconnect")
 
         self.log_edit = QPlainTextEdit()
@@ -87,7 +88,7 @@ class MainWindow(QMainWindow):
         lay = QGridLayout(central_widget)
         lay.addWidget(scan_button)
         lay.addWidget(self.devices_combobox)
-        lay.addWidget(connect_button)
+        lay.addWidget(self.connect_button)
         #lay.addWidget(disconnect_button)
         lay.addWidget(self.log_edit)
         self.progressbar = QProgressBar(self, minimum=0, maximum=100)
@@ -145,8 +146,9 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.plot,0,1, 5, 1)
 
         scan_button.clicked.connect(self.handle_scan)
-        connect_button.clicked.connect(self.handle_connect)
+        self.connect_button.clicked.connect(self.handle_connect)
         disconnect_button.clicked.connect(self.stop_client)
+
 
 
     @cached_property
@@ -186,47 +188,67 @@ class MainWindow(QMainWindow):
 
     @qasync.asyncSlot()
     async def handle_connect(self):
-        self.log_edit.appendPlainText("Connecting...")
-        device = self.devices_combobox.currentData()
+        if self.device_connected == False:
+            self.log_edit.appendPlainText("Connecting...")
+            device = self.devices_combobox.currentData()
 
 
-        if isinstance(device, BLEDevice):
-            await self.build_client(device)
-            if "H10" in device.name:
-                self.Device_icon.setVisible(True)
-                self.Device_icon.setPixmap(self.pixmap_H10)
-            if "OH1" in device.name:
-                self.Device_icon.setVisible(True)
-                self.Device_icon.setPixmap(self.pixmap_OH1)
-            self.log_edit.clear()
+            if isinstance(device, BLEDevice):
+                await self.build_client(device)
+                self.device_connected = True
+                self.connect_button.setText("Disconnect")
 
-            self.Battery_icon.setVisible(True)
+                if "H10" in device.name:
+                    self.Device_icon.setVisible(True)
+                    self.Device_icon.setPixmap(self.pixmap_H10)
+                if "OH1" in device.name:
+                    self.Device_icon.setVisible(True)
+                    self.Device_icon.setPixmap(self.pixmap_OH1)
+                self.log_edit.clear()
 
-            self.log_edit.appendPlainText("connected to " + str(device.name))
-            self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + "%")
+                self.Battery_icon.setVisible(True)
 
-            if self.battery_level < 60:
-                self.progressbar.setStyleSheet("QProgressBar::chunk "
-                          "{"
-                    "background-color: yellow;"
-                    "}")
-            elif self.battery_level < 30:
-                self.progressbar.setStyleSheet(
+                self.log_edit.appendPlainText("connected to " + str(device.name))
+                self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + "%")
+
+                if self.battery_level < 60:
+                    self.progressbar.setStyleSheet("QProgressBar::chunk "
+                              "{"
+                        "background-color: yellow;"
+                        "}")
+                elif self.battery_level < 30:
+                    self.progressbar.setStyleSheet(
+                        "QProgressBar::chunk "
+                        "{"
+                        "background-color: red;"
+                        "}")
+                else:
+                    self.progressbar.setStyleSheet(
                     "QProgressBar::chunk "
                     "{"
-                    "background-color: red;"
+                    "background-color: green;"
                     "}")
-            else:
-                self.progressbar.setStyleSheet(
-                "QProgressBar::chunk "
-                "{"
-                "background-color: green;"
-                "}")
 
 
+                self.progressbar.setValue(self.battery_level)
+
+                self.log_edit.appendPlainText("Preparing data stream...")
+
+        else:
+            self.connect_button.setText("Connect")
+            self.device_connected = False
+
+            self.stop_client()
+            self.log_edit.clear()
+            self.log_edit.appendPlainText("Disconnected")
+
+            self.Device_icon.setVisible(False)
+            self.Battery_icon.setVisible(False)
+            self.battery_level = 0
             self.progressbar.setValue(self.battery_level)
 
-            self.log_edit.appendPlainText("Preparing data stream...")
+
+
 
     @qasync.asyncSlot()
     async def handle_scan(self):
@@ -281,6 +303,7 @@ class MainWindow(QMainWindow):
 
         self.PPG_data_save.append(output)
 
+
         self.PPG_data1.append(output[0])
         self.PPG_data2.append(output[1])
         self.PPG_data3.append(output[2])
@@ -303,9 +326,6 @@ class MainWindow(QMainWindow):
         if len(self.acc_z) >= 4200:
             self.acc_z = self.acc_z[-4200:]
             self.ACC_calc = np.array(self.acc_z) - np.mean(self.acc_z)
-
-
-
             padding = 15000
             hamm1 = np.hamming(len(self.acc_z))
             freq_axis = np.arange(0, 100, 100 / (padding / 2))
