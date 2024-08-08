@@ -19,12 +19,15 @@ from PyQt5.QtWidgets import (
     QWidget, QLabel,
 )
 
-import heartpy as hp
-import BleakClient
 
+import BleakClient
 import qasync
 from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
+import pandas as pd
+import datetime
+
+from pathlib import Path
 
 
 UART_SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
@@ -33,9 +36,6 @@ UART_TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 UART_SAFE_SIZE = 20
 Battery_level = 100
-
-
-
 
 class MainWindow(QMainWindow):
     """
@@ -82,9 +82,6 @@ class MainWindow(QMainWindow):
 
         self.log_edit = QPlainTextEdit()
         self.log_edit.setFixedWidth(300)
-
-
-
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -164,7 +161,6 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.showTime)
         self.timer.start(10)
         self.timer_count = 0
-
 
         self.timer_text  = QLabel(self.log_edit)
         self.timer_text.setGeometry(220, 100, 50, 30)
@@ -256,6 +252,8 @@ class MainWindow(QMainWindow):
                 self.log_edit.appendPlainText("Preparing data stream...")
 
         else:
+            self.log_edit.clear()
+            self.Save_data()
             self.connect_button.setText("Connect")
             self.device_connected = False
             self.streaming = False
@@ -269,16 +267,13 @@ class MainWindow(QMainWindow):
             self.timer_count = 0
             self.record_button.setText("Start Recording")
             self.stop_client()
-            self.log_edit.clear()
+
             self.log_edit.appendPlainText("Disconnected")
 
             self.Device_icon.setVisible(False)
             self.Battery_icon.setVisible(False)
             self.battery_level = 0
             self.progressbar.setValue(self.battery_level)
-
-
-
 
     @qasync.asyncSlot()
     async def handle_scan(self):
@@ -322,10 +317,14 @@ class MainWindow(QMainWindow):
     def Handle_recording(self):
         if self.recording == False:
             self.recording = True
+            self.ECG_data_save = []
+            self.PPG_data_save = []
             self.record_button.setText("Stop Recording")
             self.Rec_icon.setVisible(True)
             self.timer_text.setVisible(True)
+            self.log_edit.appendPlainText("Recording")
         else:
+            self.Save_data()
             self.recording = False
             self.timer_count = 0
             self.record_button.setText("Start Recording")
@@ -335,6 +334,30 @@ class MainWindow(QMainWindow):
         if self.recording == True:
             self.timer_count += 1
             self.timer_text.setText(str(self.timer_count//6000) +"." + str((self.timer_count%6000)/100))
+    def Save_data(self):
+        # when recording is stopped, save ECG, PPG, ACC, HR and other measurements here
+        print("Saving data")
+
+        if len(self.PPG_data_save) != 0:
+            PPG_data_to_save = np.array(self.PPG_data_save)
+            df = pd.DataFrame(PPG_data_to_save)
+            now = datetime.datetime.now()
+            file = Path("measurements/PPG/" + now.strftime("%d-%m-%Y_%H-%M-%S") + "_PPG.csv")
+            self.log_edit.appendPlainText("Recording saved to file: measurements/PPG/" + now.strftime("%d-%m-%Y_%H-%M-%S") + "_PPG.csv" )
+            file.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(file, header=["PPG_CH1", "PPG_CH2","PPG_CH3", "Ambient"], index=False)
+
+
+        if len(self.ECG_data_save) != 0:
+            ECG_data_to_save = np.array(self.ECG_data_save)
+            df = pd.DataFrame(ECG_data_to_save)
+            now = datetime.datetime.now()
+            file = Path("measurements/ECG/" + now.strftime("%d-%m-%Y_%H-%M-%S") + "_ECG.csv")
+            self.log_edit.appendPlainText("Recording saved to file: measurements/ECG/" + now.strftime("%d-%m-%Y_%H-%M-%S") + "_ECG.csv")
+            file.parent.mkdir(parents=True, exist_ok=True)
+            df.to_csv(file, header=["ECG"], index=False)
+
+
 
 
     def on_ppg_updated(self, output):
