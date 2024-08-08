@@ -43,6 +43,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         self.streaming = False
         self.device_connected = False
+        self.recording = False
         self.ECG_data = []
         self.PPG_data1 = []
         self.PPG_data2 = []
@@ -63,6 +64,7 @@ class MainWindow(QMainWindow):
         self.resize(800, 400)
         self.pixmap_H10 = QPixmap('Images/H10_icon.png')
         self.pixmap_OH1 = QPixmap('Images/OH1_icon.png')
+        self.pixmap_Rec = QPixmap('Images/Rec.png')
         self.pixmap_battery = QPixmap('Images/battery_icon.png')
 
         self._client = None
@@ -75,7 +77,7 @@ class MainWindow(QMainWindow):
         self.devices_combobox.setFixedWidth(300)
         self.connect_button = QPushButton("Connect")
         self.connect_button.setFixedWidth(300)
-        disconnect_button = QPushButton("Disconnect")
+        self. record_button = QPushButton("Start Recording")
 
         self.log_edit = QPlainTextEdit()
         self.log_edit.setFixedWidth(300)
@@ -89,7 +91,8 @@ class MainWindow(QMainWindow):
         lay.addWidget(scan_button)
         lay.addWidget(self.devices_combobox)
         lay.addWidget(self.connect_button)
-        #lay.addWidget(disconnect_button)
+
+
         lay.addWidget(self.log_edit)
         self.progressbar = QProgressBar(self, minimum=0, maximum=100)
         self.progressbar.setFixedWidth(300)
@@ -100,7 +103,8 @@ class MainWindow(QMainWindow):
             "{"
             "background-color: green;"
             "}")
-
+        lay.addWidget(self.record_button)
+        self.record_button.setEnabled(False)
         # The real time Graph with pyqtgraph
         self.plot = pg.PlotWidget()
         self.text_label_HR = pg.LabelItem("Heart Rate: - BPM")
@@ -136,6 +140,12 @@ class MainWindow(QMainWindow):
         self.Device_icon.setVisible(False)
         self.Device_icon.setGeometry(220, 1, 80, 80)
 
+        self.Rec_icon = QLabel(self.log_edit)
+        self.Rec_icon.setScaledContents(True)
+        self.Rec_icon.setGeometry(220, 85, 70, 20)
+        self.Rec_icon.setVisible(False)
+        self.Rec_icon.setPixmap(self.pixmap_Rec)
+
         self.Battery_icon = QLabel(self.progressbar)
         self.Battery_icon.setPixmap(self.pixmap_battery)
         self.Battery_icon.setScaledContents(True)
@@ -143,12 +153,11 @@ class MainWindow(QMainWindow):
         self.Battery_icon.setGeometry(25, 3, 40, 15)
 
         # The Plot widget is scalable
-        lay.addWidget(self.plot,0,1, 5, 1)
+        lay.addWidget(self.plot,0,1, 6, 1)
 
         scan_button.clicked.connect(self.handle_scan)
         self.connect_button.clicked.connect(self.handle_connect)
-        disconnect_button.clicked.connect(self.stop_client)
-
+        self.record_button.clicked.connect(self.Handle_recording)
 
 
     @cached_property
@@ -189,6 +198,8 @@ class MainWindow(QMainWindow):
     @qasync.asyncSlot()
     async def handle_connect(self):
         if self.device_connected == False:
+            self.ECG_data_save = []
+            self.PPG_data_save = []
             self.log_edit.appendPlainText("Connecting...")
             device = self.devices_combobox.currentData()
 
@@ -237,7 +248,14 @@ class MainWindow(QMainWindow):
         else:
             self.connect_button.setText("Connect")
             self.device_connected = False
+            self.streaming = False
+            self.ECG_data_save = []
 
+            self.PPG_data_save = []
+            self.Rec_icon.setVisible(False)
+            self.record_button.setEnabled(False)
+            self.recording = False
+            self.record_button.setText("Start Recording")
             self.stop_client()
             self.log_edit.clear()
             self.log_edit.appendPlainText("Disconnected")
@@ -273,11 +291,12 @@ class MainWindow(QMainWindow):
         self.battery_level = level
 
     def on_ecg_updated(self, output):
-        if len(self.ECG_data) == 0 and self.streaming == False:
-            self.streaming == True
+        if len(self.ECG_data_save) == 0 and self.streaming == False and self.device_connected == True:
+            self.streaming = True
             self.log_edit.appendPlainText("Streaming")
-
-        self.ECG_data_save.append(output)
+            self.record_button.setEnabled(True)
+        if self.recording == True:
+            self.ECG_data_save.append(output)
 
         self.ECG_data.append(output)
 
@@ -288,6 +307,15 @@ class MainWindow(QMainWindow):
         """
 
         self.update_plot(self.ECG_data, type="ECG")
+    def Handle_recording(self):
+        if self.recording == False:
+            self.recording = True
+            self.record_button.setText("Stop Recording")
+            self.Rec_icon.setVisible(True)
+        else:
+            self.recording = False
+            self.record_button.setText("Start Recording")
+            self.Rec_icon.setVisible(False)
 
     def on_ppg_updated(self, output):
         """
@@ -297,11 +325,13 @@ class MainWindow(QMainWindow):
         output[4] = Ambient
         """
 
-        if len(self.PPG_data1) == 0 and self.streaming == False:
-            self.streaming == True
+        if len(self.PPG_data_save) == 0 and self.streaming == False and self.device_connected == True:
+            self.streaming = True
             self.log_edit.appendPlainText("Streaming")
+            self.record_button.setEnabled(True)
 
-        self.PPG_data_save.append(output)
+        if self.recording == True:
+            self.PPG_data_save.append(output)
 
 
         self.PPG_data1.append(output[0])
@@ -339,11 +369,6 @@ class MainWindow(QMainWindow):
             print("Respiration:", resp,"|", np.argmax(Frequencies),"|", freq_axis[np.argmax(Frequencies)])
 
 
-
-
-
-
-
     def on_HR_updated(self, output):
         # output[0] = Polar HR
         # output[1] = IBI list
@@ -378,15 +403,19 @@ class MainWindow(QMainWindow):
     def update_plot(self, data_to_display, type):
         if type == "ECG":
             self.line.setData(y=data_to_display)
+            # In case of starting ECG after PPG measurement, clean the PPG graph
+            if len(self.PPG_data1) != 0:
+                self.line_PPG1.setData(y=[])
+                self.line_PPG2.setData(y=[])
+                self.line_PPG3.setData(y=[])
+
         elif type == "PPG":
             self.line_PPG1.setData(y=data_to_display[0])
             self.line_PPG2.setData(y=data_to_display[1])
             self.line_PPG3.setData(y=data_to_display[2])
-
-
-
-
-
+            # In case of starting PPG after ECG measurement, clean the ECG graph
+            if len(self.ECG_data) != 0:
+                self.line.setData(y=[])
 
 def main():
     app = QApplication(sys.argv)
