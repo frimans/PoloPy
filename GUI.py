@@ -4,6 +4,7 @@ import sys
 import pyqtgraph as pg
 import numpy as np
 from PyQt5 import QtGui
+from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QPixmap
 from scipy.fft import fft
 
@@ -159,6 +160,15 @@ class MainWindow(QMainWindow):
         self.connect_button.clicked.connect(self.handle_connect)
         self.record_button.clicked.connect(self.Handle_recording)
 
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.showTime)
+        self.timer.start(10)
+        self.timer_count = 0
+
+
+        self.timer_text  = QLabel(self.log_edit)
+        self.timer_text.setGeometry(220, 100, 50, 30)
+        self.timer_text.setVisible(False)
 
     @cached_property
     def devices(self):
@@ -255,6 +265,8 @@ class MainWindow(QMainWindow):
             self.Rec_icon.setVisible(False)
             self.record_button.setEnabled(False)
             self.recording = False
+            self.timer_text.setVisible(False)
+            self.timer_count = 0
             self.record_button.setText("Start Recording")
             self.stop_client()
             self.log_edit.clear()
@@ -312,10 +324,18 @@ class MainWindow(QMainWindow):
             self.recording = True
             self.record_button.setText("Stop Recording")
             self.Rec_icon.setVisible(True)
+            self.timer_text.setVisible(True)
         else:
             self.recording = False
+            self.timer_count = 0
             self.record_button.setText("Start Recording")
             self.Rec_icon.setVisible(False)
+            self.timer_text.setVisible(False)
+    def showTime(self):
+        if self.recording == True:
+            self.timer_count += 1
+            self.timer_text.setText(str(self.timer_count//6000) +"." + str((self.timer_count%6000)/100))
+
 
     def on_ppg_updated(self, output):
         """
