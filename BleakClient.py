@@ -45,28 +45,27 @@ class QBleakClient(QObject):
         #   ppg2 (24)
         #   ppg3 (24)
         #   amb (24)
+        if data[0] == 0x01:
+
+            def get_ppg_value(subdata):
+
+                # A bit of magic happening here with the padding.
+                # Since the value comes as a 24 bit signed int, it's padded to allow the use
+                # of struct.unpack("<i") since that takes a 32 bit signed integer.
+                # The padding is then either 0xFF or 0x00 depending of if the most significant
+                # bit of the most significant byte of the 24 bit value was set. Since this
+                # determine if the value was positive of negative.
+                return struct.unpack("<i", subdata + (b'\0' if subdata[2] < 128 else b'\xff'))[0]
 
 
-
-        def get_ppg_value(subdata):
-
-            # A bit of magic happening here with the padding.
-            # Since the value comes as a 24 bit signed int, it's padded to allow the use
-            # of struct.unpack("<i") since that takes a 32 bit signed integer.
-            # The padding is then either 0xFF or 0x00 depending of if the most significant
-            # bit of the most significant byte of the 24 bit value was set. Since this
-            # determine if the value was positive of negative.
-            return struct.unpack("<i", subdata + (b'\0' if subdata[2] < 128 else b'\xff'))[0]
+            numSamples = math.floor((len(data) - 10) / 12)
+            for x in range(numSamples):
+                channel_samples = []
+                for y in range(4):
+                    channel_samples.append(get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3]))
 
 
-        numSamples = math.floor((len(data) - 10) / 12)
-        for x in range(numSamples):
-            channel_samples = []
-            for y in range(4):
-                channel_samples.append(get_ppg_value(data[10 + x * 12 + y * 3:(10 + x * 12 + y * 3) + 3]))
-
-
-            self.ppg_updated.emit(channel_samples)
+                self.ppg_updated.emit(channel_samples)
 
 
     def hr_data_conv(self, sender, data):
@@ -86,7 +85,7 @@ class QBleakClient(QObject):
         - inter-beat-intervals (IBIs)
             One IBI is encoded by 2 consecutive bytes. Up to 18 bytes depending on presence of uint16 HR format and energy expenditure.
         """
-        print(data[0])
+        print(data)
         byte0 = data[0]  # heart rate format
         uint8_format = (byte0 & 1) == 0
         energy_expenditure = ((byte0 >> 3) & 1) == 1
@@ -128,6 +127,7 @@ class QBleakClient(QObject):
         # sample0 = [45 FF E4 FF B5 03] x-axis(45 FF=-184 millig) y-axis(E4 FF=-28 millig) z-axis(B5 03=949 millig) ,
         # sample1, sample2,
 
+
         if data[0] == 0x02:
             time_step = 0.005  # 200 Hz sample rate
             timestamp = self.convert_to_unsigned_long(data, 1,
@@ -162,6 +162,7 @@ class QBleakClient(QObject):
                 Acc_list.append([x, y, z])
 
                 sample_timestamp += time_step
+            print(Acc_list)
             self.acc_updated.emit(Acc_list)
 
 
@@ -296,7 +297,7 @@ class QBleakClient(QObject):
 
     async def start_ACC_OH1(self):
         print("starting ACC...")
-        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
+        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0x0032, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
         await self.client.write_gatt_char(PMD_CONTROL, ACC_WRITE)
