@@ -18,3 +18,8 @@ Currently the GUI.py is the most functional script. It implements QT based GUI f
 
 The project is under MIT License, so be free to use and modify the code. Just remember to refer to the license accordingly.
 Have fun :)
+
+The project got huge assistance from the following GitHub repos:
+* polar-oh1 by Erik Botö, https://github.com/erikboto/polar-oh1
+* polarpy by wideopensource, https://github.com/wideopensource/polarpy
+* every-breath-you-take by Kieran Brennan, https://github.com/kieranabrennan/every-breath-you-take

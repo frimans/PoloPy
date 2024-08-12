@@ -194,12 +194,14 @@ class MainWindow(QMainWindow):
         await self._client.start()
         if "H10" in device.name:
             await self._client.start_ECG()
+            await self._client.start_ACC_H10()
         if "OH1" in device.name:
-
-
             await self._client.start_PPG()
-        await self._client.start_ACC()
+            await self._client.start_ACC_OH1()
+
         await self._client.start_HR()
+
+
 
     @qasync.asyncSlot()
     async def handle_connect(self):
@@ -277,6 +279,7 @@ class MainWindow(QMainWindow):
 
     @qasync.asyncSlot()
     async def handle_scan(self):
+
         self.log_edit.appendPlainText("Scanning for Polar devices...")
         self.devices.clear()
         devices = await BleakScanner.discover()
@@ -288,8 +291,8 @@ class MainWindow(QMainWindow):
                 pass
             elif "Polar" in device.name:
                 Polar_amount +=1
-
                 self.devices_combobox.insertItem(i, device.name, device)
+
         self.log_edit.appendPlainText("Finished scanning. Found " + str(Polar_amount) + " Polar device(s).")
         if Polar_amount !=0:
             self.log_edit.appendPlainText("Select a device from the list for connecting.")

@@ -24,7 +24,6 @@ class QBleakClient(QObject):
     Battery_level_read = pyqtSignal(int)
     first_acc_record = True
 
-
     def ecg_data_conv(self, sender, data):
         if data[0] == 0x00:
             #timestamp = self.convert_to_unsigned_long(data, 1, 8)
@@ -87,6 +86,7 @@ class QBleakClient(QObject):
         - inter-beat-intervals (IBIs)
             One IBI is encoded by 2 consecutive bytes. Up to 18 bytes depending on presence of uint16 HR format and energy expenditure.
         """
+        print(data[0])
         byte0 = data[0]  # heart rate format
         uint8_format = (byte0 & 1) == 0
         energy_expenditure = ((byte0 >> 3) & 1) == 1
@@ -117,6 +117,7 @@ class QBleakClient(QObject):
             values.append(ibi)
             #self.ibi_queue_values.enqueue(np.array([ibi]))
             #self.ibi_queue_times.enqueue(np.array([time.time_ns() / 1.0e9]))
+
         self.HR_updated.emit([hr, values])
 
     def acc_data_conv(self, sender, data):
@@ -234,19 +235,47 @@ class QBleakClient(QObject):
 
         """
         Measurement type:
-        ECG = 0,
-        PPG = 1,
-        ACC = 2,
-        PPI = 3,
-        GYRO = 5,
-        MAG = 6
+        
         """
 
         # Read the battery level and emit it to the GUI for displaying
         self.Battery_level_read.emit(Battery_level)
 
-
+    """
+    Command structure:
+    
+    Type:
+    ECG = 0,
+    PPG = 1,
+    ACC = 2,
+    PPI = 3,
+    GYRO = 5,
+    MAG = 6
+    
+    Sample Rate:
+    SampleRate50 = 0x0032
+    SampleRate135 = 0x0082
+    SampleRate200 = 0x00c8
+    SampleRateUnknown = -1
+    
+    Resolution:
+    Resolution16 = 0x0010
+    Resolution22 = 0x0016
+    
+    ACCFrameType8 = 0,
+    ACCFrameType16 = 1,
+    ACCFrameType24 = 2,
+    ACCFrameTypeDelta = 128
+    Range8G = 0x0008,
+    
+    [0x02, Type, 0x00, 0x01, Sample Rate, 0x00, 0x01, 0x01, 0x0E, 0x00]
+    
+    For example for the ECG measurement:
+    [0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00]
+    [0x02, ECG, 0x00, 0x01, 135, 0x00, 0x01, 0x01, 0x0E, 0x00]
+    """
     async def start_HR(self):
+        print("starting HR...")
         HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
         await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
 
@@ -257,7 +286,16 @@ class QBleakClient(QObject):
         await self.client.write_gatt_char(PMD_CONTROL, ECG_WRITE)
         await self.client.start_notify(PMD_DATA, self.ecg_data_conv)
 
-    async def start_ACC(self):
+    async def start_ACC_H10(self):
+        print("starting ACC...")
+        ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
+        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
+        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        await self.client.write_gatt_char(PMD_CONTROL, ACC_WRITE)
+        await self.client.start_notify(PMD_DATA, self.acc_data_conv)
+
+    async def start_ACC_OH1(self):
+        print("starting ACC...")
         ACC_WRITE = bytearray([0x02, 0x02, 0x00, 0x01, 0xC8, 0x00, 0x01, 0x01, 0x10, 0x00, 0x02, 0x01, 0x08, 0x00])
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
         PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
