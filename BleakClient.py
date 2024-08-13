@@ -21,6 +21,7 @@ class QBleakClient(QObject):
     ppg_updated = pyqtSignal(list)
     acc_updated = pyqtSignal(list)
     HR_updated = pyqtSignal(list)
+    PPI_updated = pyqtSignal(list)
     Battery_level_read = pyqtSignal(int)
     first_acc_record = True
 
@@ -85,7 +86,7 @@ class QBleakClient(QObject):
         - inter-beat-intervals (IBIs)
             One IBI is encoded by 2 consecutive bytes. Up to 18 bytes depending on presence of uint16 HR format and energy expenditure.
         """
-        print(data)
+
         byte0 = data[0]  # heart rate format
         uint8_format = (byte0 & 1) == 0
         energy_expenditure = ((byte0 >> 3) & 1) == 1
@@ -129,7 +130,7 @@ class QBleakClient(QObject):
 
 
         if data[0] == 0x02:
-            time_step = 0.005  # 200 Hz sample rate
+            time_step = 0.005  # 200 Hz sample rate (ECG)
             timestamp = self.convert_to_unsigned_long(data, 1,
                                                           8) / 1.0e9  # timestamp of the last sample in the record
 
@@ -162,9 +163,29 @@ class QBleakClient(QObject):
                 Acc_list.append([x, y, z])
 
                 sample_timestamp += time_step
-            print(Acc_list)
             self.acc_updated.emit(Acc_list)
 
+    def PPI_data_conv(self, sender, data):
+        if data[0] == 0x03:
+
+            type1, _, type2 = struct.unpack("<BqB", data[0:10])
+            if type1 == 3:
+                numSamples = math.floor((len(data) - 8) / 6)
+
+
+                HRs = []
+                PPIs = []
+                err_ests = []
+                for x in range(numSamples):
+                    start = 10 + x * 6
+                    sample = data[start:start + 6]
+                    hr, ppi, errEst, flags = struct.unpack("<BHHB", sample)
+                    #print("HR: {}\t PPI: {}, Error Est.: {}".format(hr, ppi, errEst))
+                    HRs.append(hr)
+                    PPIs.append(ppi)
+                    err_ests.append(errEst)
+
+                self.PPI_updated.emit([HRs, PPIs, err_ests])
 
     def convert_array_to_signed_int(self, data, offset, length):
         return int.from_bytes(
@@ -245,40 +266,59 @@ class QBleakClient(QObject):
     """
     Command structure:
     
+    START_MEASUREMENT = 2
+    STOP_MEASUREMENT = 3
+    
     Type:
-    ECG = 0,
-    PPG = 1,
-    ACC = 2,
-    PPI = 3,
-    GYRO = 5,
+    ECG = 0
+    PPG = 1
+    ACC = 2
+    PPI = 3
+    ??? = 4
+    GYRO = 5
     MAG = 6
+    ??? = 7
     
     Sample Rate:
-    SampleRate50 = 0x0032
-    SampleRate135 = 0x0082
-    SampleRate200 = 0x00c8
+    50 Hz = 0x0032
+    135 Hz = 0x0082
+    200 Hz = 0x00c8
     SampleRateUnknown = -1
     
     Resolution:
-    Resolution16 = 0x0010
-    Resolution22 = 0x0016
+    16 = 0x0010
+    22 = 0x0016
     
-    ACCFrameType8 = 0,
-    ACCFrameType16 = 1,
-    ACCFrameType24 = 2,
-    ACCFrameTypeDelta = 128
-    Range8G = 0x0008,
+    ACC Frame type:
+    8 = 0,
+    16 = 1,
+    24 = 2,
+    Delta = 128
     
-    [0x02, Type, 0x00, 0x01, Sample Rate, 0x00, 0x01, 0x01, 0x0E, 0x00]
+    Range:
+    8G = 0x0008,
+    
+    [start measurement / stop measurement, Type, 0x00, 0x01, Sample Rate, 0x00, 0x01, 0x01, 0x0E, 0x00]
     
     For example for the ECG measurement:
     [0x02, 0x00, 0x00, 0x01, 0x82, 0x00, 0x01, 0x01, 0x0E, 0x00]
-    [0x02, ECG, 0x00, 0x01, 135, 0x00, 0x01, 0x01, 0x0E, 0x00]
+    [start measurement, ECG, 0x00, 0x01, 135, 0x00, 0x01, 0x01, 0x0E, 0x00]
     """
+
+
     async def start_HR(self):
         print("starting HR...")
         HEART_RATE_MEASUREMENT_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
         await self.client.start_notify(HEART_RATE_MEASUREMENT_UUID, self.hr_data_conv)
+    async def start_PPI(self):
+        print("starting PPI...")
+        PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##
+        PMD_DATA = "FB005C82-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of start stream ##
+        PPI_WRITE = bytearray([0x02, 0x03])
+        await self.client.write_gatt_char(PMD_CONTROL, PPI_WRITE)
+        await self.client.start_notify(PMD_DATA, self.PPI_data_conv)
+
+
 
     async def start_ECG(self):
         PMD_CONTROL = "FB005C81-02E7-F387-1CAD-8ACD2D8DF0C8"  ## UUID for Request of stream settings ##

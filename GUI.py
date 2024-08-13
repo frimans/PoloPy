@@ -189,17 +189,23 @@ class MainWindow(QMainWindow):
         self._client.ppg_updated.connect(self.on_ppg_updated)
         self._client.acc_updated.connect(self.on_acc_updated)
         self._client.HR_updated.connect(self.on_HR_updated)
+        self._client.PPI_updated.connect(self.on_HR_updated)
+
         self._client.Battery_level_read.connect(self.battery_level_updated)
 
         await self._client.start()
         if "H10" in device.name:
             await self._client.start_ECG()
             await self._client.start_ACC_H10()
+            await self._client.start_HR()
+
         if "OH1" in device.name:
             await self._client.start_PPG()
             await self._client.start_ACC_OH1()
+            await self._client.start_PPI()
 
-        await self._client.start_HR()
+
+
 
 
 
@@ -210,6 +216,7 @@ class MainWindow(QMainWindow):
             self.PPG_data_save = []
             self.log_edit.appendPlainText("Connecting...")
             device = self.devices_combobox.currentData()
+
 
 
             if isinstance(device, BLEDevice):
@@ -269,7 +276,6 @@ class MainWindow(QMainWindow):
             self.timer_count = 0
             self.record_button.setText("Start Recording")
             self.stop_client()
-
             self.log_edit.appendPlainText("Disconnected")
 
             self.Device_icon.setVisible(False)
@@ -360,9 +366,6 @@ class MainWindow(QMainWindow):
             file.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(file, header=["ECG"], index=False)
 
-
-
-
     def on_ppg_updated(self, output):
         """
         output[0] = PPG1
@@ -399,6 +402,10 @@ class MainWindow(QMainWindow):
             self.acc_x.append(reading[0])
             self.acc_y.append(reading[1])
             self.acc_z.append(reading[2])
+
+            """
+            Some Real time actions on the ACC can be performed here (Like the breathing calculation below)
+            """
         if len(self.acc_z) >= 4200:
             self.acc_z = self.acc_z[-4200:]
             self.ACC_calc = np.array(self.acc_z) - np.mean(self.acc_z)
@@ -420,7 +427,7 @@ class MainWindow(QMainWindow):
         # output[1] = IBI list
 
         # Here the HR estimate from the device is displayed in the GUI
-        self.text_label_HR.setText("Heart rate: " + str(output[0]) + " BPM")
+        self.text_label_HR.setText("Heart rate: " + str(np.average(output[0])) + " BPM")
         print("HR:", output[0])
 
         # Alternatively the HR can be calculated from the IBI values
@@ -445,6 +452,25 @@ class MainWindow(QMainWindow):
 
         self.text_label_HRV.setText("RMSSD: " + str(RMSSD) + " ms")
         print("RMSSD:", RMSSD, "ms")
+    def on_PPI_updated(self, output):
+        """
+        output[0] = HR
+        output[1] = PPI
+        output[2] = Error estimates
+        """
+        print(output[0])
+        print(output[1])
+
+        # PRV calculation
+        # Please note accuracy not same as on HRV
+        for reading in output[1]:
+            self.IBI_data.append(reading)
+
+        RMSSD = np.round(np.sqrt(np.mean(np.square(np.diff(self.IBI_data)))), 1)
+
+        self.text_label_HRV.setText("RMSSD: " + str(RMSSD) + " ms")
+        print("RMSSD:", RMSSD, "ms")
+
 
     def update_plot(self, data_to_display, type):
         if type == "ECG":
