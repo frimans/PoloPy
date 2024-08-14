@@ -49,6 +49,8 @@ class liveFilter():
         return y[0]
 
 
+
+
 class MainWindow(QMainWindow):
     """
     This is a class for the QT based user interface (UI).
@@ -85,6 +87,8 @@ class MainWindow(QMainWindow):
         self.realtimeFilter1 = liveFilter(4, [0.1,20], 135, "bandpass", "butter")
         self.realtimeFilter2 = liveFilter(4, [0.1,20], 135, "bandpass", "butter")
         self.realtimeFilter3 = liveFilter(4, [0.1,20], 135, "bandpass", "butter")
+
+        self.realtimeFilter_ECG = liveFilter(4, [0.1, 20], 130, "bandpass", "butter")
 
 
         self._client = None
@@ -288,6 +292,7 @@ class MainWindow(QMainWindow):
             self.connect_button.setText("Connect")
             self.device_connected = False
             self.streaming = False
+            self.filter_checkbox.setEnabled(False)
             self.ECG_data_save = []
 
             self.PPG_data_save = []
@@ -328,23 +333,7 @@ class MainWindow(QMainWindow):
     def battery_level_updated(self, level):
         self.battery_level = level
 
-    def on_ecg_updated(self, output):
-        if len(self.ECG_data_save) == 0 and self.streaming == False and self.device_connected == True:
-            self.streaming = True
-            self.log_edit.appendPlainText("Streaming")
-            self.record_button.setEnabled(True)
-        if self.recording == True:
-            self.ECG_data_save.append(output)
 
-        self.ECG_data.append(output)
-
-        if len(self.ECG_data) >= 1200:
-            self.ECG_data = self.ECG_data[-1200:]
-        """
-        Some real time actions on the ECG can be performed here
-        """
-
-        self.update_plot(self.ECG_data, type="ECG")
     def Handle_recording(self):
         if self.recording == False:
             self.recording = True
@@ -388,6 +377,27 @@ class MainWindow(QMainWindow):
             file.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(file, header=["ECG"], index=False)
 
+    def on_ecg_updated(self, output):
+        if len(self.ECG_data_save) == 0 and self.streaming == False and self.device_connected == True:
+            self.streaming = True
+            self.log_edit.appendPlainText("Streaming")
+            self.filter_checkbox.setEnabled(True)
+            self.record_button.setEnabled(True)
+        if self.recording == True:
+            self.ECG_data_save.append(output)
+
+        if self.filter_checkbox.isChecked():
+            self.ECG_data.append(self.realtimeFilter_ECG.process(output))
+        else:
+            self.ECG_data.append(output)
+
+        if len(self.ECG_data) >= 1200:
+            self.ECG_data = self.ECG_data[-1200:]
+        """
+        Some real time actions on the ECG can be performed here
+        """
+
+        self.update_plot(self.ECG_data, type="ECG")
     def on_ppg_updated(self, output):
         """
         output[0] = PPG1
