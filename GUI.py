@@ -7,6 +7,7 @@ from PyQt5 import QtGui
 from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QPixmap
 from scipy.fft import fft
+from collections import deque
 
 from PyQt5.QtWidgets import (
     QApplication,
@@ -16,7 +17,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QGridLayout,
     QProgressBar,
-    QWidget, QLabel,
+    QWidget, QLabel, QCheckBox
 )
 
 
@@ -26,6 +27,7 @@ from bleak import BleakScanner
 from bleak.backends.device import BLEDevice
 import pandas as pd
 import datetime
+import scipy
 
 from pathlib import Path
 
@@ -36,6 +38,16 @@ UART_TX_CHAR_UUID = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
 
 UART_SAFE_SIZE = 20
 Battery_level = 100
+
+class liveFilter():
+    def __init__(self, odred, window, fs, bandtype, filtertype):
+        #initialize filter coefficients
+        self.b, self.a = scipy.signal.iirfilter(odred, Wn=window, fs=fs, btype=bandtype, ftype=filtertype)
+        self.z = np.zeros(self.b.size-1)
+    def process(self, data):
+        y, self.z = scipy.signal.lfilter(self.b, self.a, [data], zi=self.z)
+        return y[0]
+
 
 class MainWindow(QMainWindow):
     """
@@ -49,6 +61,9 @@ class MainWindow(QMainWindow):
         self.PPG_data1 = []
         self.PPG_data2 = []
         self.PPG_data3 = []
+        self.PPG_data1_filtered = []
+        self.PPG_data2_filtered = []
+        self.PPG_data3_filtered = []
         self.PPG_ambient = []
         self.PPG_data_save = []
         self.HR_data = []
@@ -67,6 +82,10 @@ class MainWindow(QMainWindow):
         self.pixmap_OH1 = QPixmap('Images/OH1_icon.png')
         self.pixmap_Rec = QPixmap('Images/Rec.png')
         self.pixmap_battery = QPixmap('Images/battery_icon.png')
+        self.realtimeFilter1 = liveFilter(4, [0.1,20], 135, "bandpass", "butter")
+        self.realtimeFilter2 = liveFilter(4, [0.1,20], 135, "bandpass", "butter")
+        self.realtimeFilter3 = liveFilter(4, [0.1,20], 135, "bandpass", "butter")
+
 
         self._client = None
 
@@ -105,6 +124,13 @@ class MainWindow(QMainWindow):
         self.record_button.setEnabled(False)
         # The real time Graph with pyqtgraph
         self.plot = pg.PlotWidget()
+        self.plot.setMouseEnabled(x=False, y=False)
+        self.filter_checkbox = QCheckBox("Apply filters")
+        self.filter_checkbox.setStyleSheet("color: white")
+        self.filter_checkbox.setParent(self.plot)
+        self.filter_checkbox.setGeometry(50, -27, 80, 80)
+        self.filter_checkbox.setEnabled(False)
+
         self.text_label_HR = pg.LabelItem("Heart Rate: - BPM")
         self.text_label_HR.setParentItem(self.plot.graphicsItem())
         self.text_label_HR.anchor(itemPos=(0.1, 0.06), parentPos=(0.1, 0.06))
@@ -204,11 +230,6 @@ class MainWindow(QMainWindow):
             await self._client.start_ACC_OH1()
             await self._client.start_PPI()
 
-
-
-
-
-
     @qasync.asyncSlot()
     async def handle_connect(self):
         if self.device_connected == False:
@@ -237,17 +258,18 @@ class MainWindow(QMainWindow):
                 self.log_edit.appendPlainText("connected to " + str(device.name))
                 self.log_edit.appendPlainText("Device Battery level: " + str(self.battery_level) + "%")
 
-                if self.battery_level < 60:
-                    self.progressbar.setStyleSheet("QProgressBar::chunk "
-                              "{"
-                        "background-color: yellow;"
-                        "}")
-                elif self.battery_level < 30:
+                if self.battery_level < 30:
                     self.progressbar.setStyleSheet(
                         "QProgressBar::chunk "
                         "{"
                         "background-color: red;"
                         "}")
+                elif self.battery_level < 60:
+                    self.progressbar.setStyleSheet("QProgressBar::chunk "
+                              "{"
+                        "background-color: yellow;"
+                        "}")
+
                 else:
                     self.progressbar.setStyleSheet(
                     "QProgressBar::chunk "
@@ -378,19 +400,34 @@ class MainWindow(QMainWindow):
             self.streaming = True
             self.log_edit.appendPlainText("Streaming")
             self.record_button.setEnabled(True)
+            self.filter_checkbox.setEnabled(True)
 
         if self.recording == True:
             self.PPG_data_save.append(output)
 
 
-        self.PPG_data1.append(output[0])
-        self.PPG_data2.append(output[1])
-        self.PPG_data3.append(output[2])
+        if self.filter_checkbox.isChecked():
+            self.PPG_data1.append(self.realtimeFilter1.process(output[0]))
+            self.PPG_data2.append(self.realtimeFilter2.process(output[1]))
+            self.PPG_data3.append(self.realtimeFilter3.process(output[2]))
+        else:
+            self.PPG_data1.append(output[0])
+            self.PPG_data2.append(output[1])
+            self.PPG_data3.append(output[2])
+
+        #self.PPG_data1_filtered.append(self.realtimeFilter1.process(output[0]))
+        #self.PPG_data2_filtered.append(self.realtimeFilter2.process(output[1]))
+        #self.PPG_data3_filtered.append(self.realtimeFilter3.process(output[2]))
+
+
 
         if len(self.PPG_data1) >= 1200:
             self.PPG_data1 = self.PPG_data1[-1200:]
             self.PPG_data2 = self.PPG_data2[-1200:]
             self.PPG_data3 = self.PPG_data3[-1200:]
+            self.PPG_data1_filtered = self.PPG_data1_filtered[-1200:]
+            self.PPG_data2_filtered = self.PPG_data2_filtered[-1200:]
+            self.PPG_data3_filtered = self.PPG_data3_filtered[-1200:]
         """
         Some real time actions on the PPG can be performed here
         """
